@@ -1,0 +1,11 @@
+{
+  "name": "Divvy",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@cryptovarna/tron-contracts": "^0.4.5",
+    "tronweb": "^6.0.4",
+    "dotenv": "^16.0.0"
+  }
+}
