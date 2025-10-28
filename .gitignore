@@ -49,3 +49,5 @@ private.key
 key.json
 *.pem
 *.key
+.claude/settings.local.json
+examples/.claude/settings.local.json

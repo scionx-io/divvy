@@ -126,6 +126,33 @@ TronBox supports deploying contracts on EVM-compatible blockchains.
 
 For more information, please refer to: https://tronbox.io/docs/guides/work-with-evm
 
+## Ruby Examples
+
+The project includes comprehensive Ruby examples for interacting with the PaymentSplitter contract using the `tron.rb` gem.
+
+### Quick Start
+
+```bash
+cd examples
+bundle install
+cp .env.example .env
+# Edit .env with your configuration
+ruby ruby_payment_splitter.rb
+```
+
+### What's Included
+
+- Complete examples for all contract functions
+- Documentation for implementing contract interaction in `tron.rb`
+- Environment configuration examples
+- Security best practices
+
+See [examples/README.md](examples/README.md) for detailed documentation.
+
+### Current Status
+
+⚠️ The `tron.rb` gem currently supports wallet balance and token information queries. Contract interaction methods (trigger_contract, call_contract) need to be implemented to fully support the PaymentSplitter examples.
+
 ## Additional Resources
 
 For further learning, visit the official TronBox site at https://tronbox.io
