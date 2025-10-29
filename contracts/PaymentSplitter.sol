@@ -11,6 +11,7 @@ import "./interfaces/IPaymentSplitter.sol";
  * @dev Splits TRC20 token payments between recipients and operators with fees
  * @notice Only supports standard TRC20 tokens (no fee-on-transfer or rebasing tokens)
  * @notice Uses direct transfers (no reentrancy risk, no need for ReentrancyGuard)
+ * @notice Deployed on TRON network
  */
 contract PaymentSplitter is IPaymentSplitter {
     using SafeTRC20 for ITRC20;
@@ -21,19 +22,6 @@ contract PaymentSplitter is IPaymentSplitter {
 
     /// @dev Mapping to track processed payments: operator => payment ID => processed
     mapping(address => mapping(bytes16 => bool)) private processedPayments;
-    
-    event OperatorRegistered(address indexed operator, address indexed feeDestination);
-    event OperatorUnregistered(address indexed operator);
-    event FeeDestinationUpdated(address indexed operator, address indexed oldDestination, address indexed newDestination);
-    event PaymentProcessed(
-        address indexed operator, 
-        bytes16 indexed id, 
-        address indexed recipient, 
-        address sender, 
-        uint256 recipientAmount,
-        uint256 feeAmount,
-        address token
-    );
 
     /**
      * @notice Register operator with custom fee destination
@@ -83,26 +71,27 @@ contract PaymentSplitter is IPaymentSplitter {
      * @notice Split TRC20 token payment between recipient and operator
      * @param intent SplitPaymentIntent struct containing all payment parameters
      */
-    function splitPayment(SplitPaymentIntent calldata intent) external {
-        // Validate operator registration
-        require(feeDestinations[intent.operator] != address(0), "Operator not registered");
-
-        // Validate signature
-        _validateSignature(intent, msg.sender);
-
-        // Validate payment parameters
+    function splitPayment(SplitPaymentIntent calldata intent)
+        external
+        operatorIsRegistered(intent.operator)
+        validPayment(intent, msg.sender)
+    {
+        // Validate timing
         require(block.timestamp <= intent.deadline, "Payment expired");
+
+        // Validate addresses
         require(intent.recipient != address(0), "Invalid recipient address");
         require(intent.token != address(0), "Invalid token address");
+
+        // Check if already processed
         require(!processedPayments[intent.operator][intent.id], "Payment already processed");
 
+        // Validate amounts
+        require(intent.recipientAmount > 0 || intent.feeAmount > 0, "No amounts to transfer");
         uint256 totalAmount = intent.recipientAmount + intent.feeAmount;
-        require(totalAmount > 0, "Total amount must be greater than 0");
 
-        // Determine refund destination: if not provided, use msg.sender
-        address actualRefundDestination = intent.refundDestination == address(0)
-            ? msg.sender
-            : intent.refundDestination;
+        // Validate token is a contract
+        require(intent.token.code.length > 0, "Token not a contract");
 
         // CRITICAL: Mark as processed BEFORE any external calls (Checks-Effects-Interactions)
         processedPayments[intent.operator][intent.id] = true;
@@ -111,7 +100,7 @@ contract PaymentSplitter is IPaymentSplitter {
         ITRC20 paymentToken = ITRC20(intent.token);
         address feeDestination = feeDestinations[intent.operator];
 
-        // Transfer to recipient
+        // Transfer to recipient (direct transfer - more gas efficient on TRON)
         if (intent.recipientAmount > 0) {
             paymentToken.safeTransferFrom(msg.sender, intent.recipient, intent.recipientAmount);
         }
@@ -133,35 +122,46 @@ contract PaymentSplitter is IPaymentSplitter {
     }
 
     /**
-     * @dev Validates the operator's signature on the payment intent
-     * @param intent The payment intent to validate
-     * @param sender The address initiating the payment
+     * @dev Validates that the operator is registered
      */
-    function _validateSignature(
-        SplitPaymentIntent calldata intent,
-        address sender
-    ) private view {
+    modifier operatorIsRegistered(address operator) {
+        require(feeDestinations[operator] != address(0), "Operator not registered");
+        _;
+    }
+
+    /**
+     * @dev Validates the payment intent signature and structure
+     * @param _intent The payment intent to validate
+     * @param sender The address initiating the payment
+     * @notice TRON note: Uses block.chainid for replay protection
+     * @notice Tron Mainnet chainId: 728126428, Nile Testnet: 3448148188, Shasta Testnet: 2494104990
+     */
+    modifier validPayment(SplitPaymentIntent calldata _intent, address sender) {
         bytes32 hash = keccak256(
             abi.encodePacked(
-                intent.recipientAmount,
-                intent.deadline,
-                intent.recipient,
-                intent.token,
-                intent.refundDestination,
-                intent.feeAmount,
-                intent.id,
-                intent.operator,
+                _intent.recipientAmount,
+                _intent.deadline,
+                _intent.recipient,
+                _intent.token,
+                _intent.refundDestination,
+                _intent.feeAmount,
+                _intent.id,
+                _intent.operator,
+                block.chainid,  // Prevents replay attacks (TRON supports this since v4.1.0)
                 sender,
                 address(this)
             )
         );
 
+        // TRON uses "\x19TRON Signed Message:\n32" prefix for compatibility
+        // but "\x19Ethereum Signed Message:\n32" also works and is more standard
         bytes32 signedMessageHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
         );
-        address signer = signedMessageHash.recover(intent.signature);
+        address signer = signedMessageHash.recover(_intent.signature);
 
-        require(signer == intent.operator, "Invalid signature");
+        require(signer == _intent.operator, "Invalid signature");
+        _;
     }
 
     /**
