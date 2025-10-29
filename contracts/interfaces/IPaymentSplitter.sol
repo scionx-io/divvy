@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.20;
+
+/**
+ * @title IPaymentSplitter
+ * @dev Interface for PaymentSplitter contract
+ */
+interface IPaymentSplitter {
+    /// @notice Payment intent structure containing all parameters for a split payment
+    struct SplitPaymentIntent {
+        address recipient;           // Address to receive the payment
+        address token;               // TRC20 token address
+        uint256 recipientAmount;     // Amount to send to recipient
+        address operator;            // Operator authorizing the payment
+        uint256 feeAmount;           // Fee amount for the operator
+        bytes16 id;                  // Unique payment identifier
+        uint256 deadline;            // Expiration timestamp
+        address refundDestination;   // Where to send refunds (optional, defaults to sender)
+        bytes signature;             // Operator's signature
+    }
+
+    /// @notice Emitted when an operator registers
+    event OperatorRegistered(address indexed operator, address indexed feeDestination);
+
+    /// @notice Emitted when an operator unregisters
+    event OperatorUnregistered(address indexed operator);
+
+    /// @notice Emitted when an operator updates their fee destination
+    event FeeDestinationUpdated(
+        address indexed operator,
+        address indexed oldDestination,
+        address indexed newDestination
+    );
+
+    /// @notice Emitted when a payment is successfully processed
+    event PaymentProcessed(
+        address indexed operator,
+        bytes16 indexed id,
+        address indexed recipient,
+        address sender,
+        uint256 recipientAmount,
+        uint256 feeAmount,
+        address token
+    );
+    /**
+     * @notice Register operator with custom fee destination
+     * @param _feeDestination Address where fees will be sent (cannot be zero address)
+     * @dev Operator can change fee destination at any time
+     */
+    function registerOperatorWithFeeDestination(address _feeDestination) external;
+
+    /**
+     * @notice Register operator using operator's address as fee destination
+     */
+    function registerOperator() external;
+
+    /**
+     * @notice Unregister operator
+     * @dev WARNING: Operator can front-run splitPayment() calls by unregistering,
+     *      causing user transactions to revert. This is acceptable behavior as
+     *      operators control their own service availability.
+     */
+    function unregisterOperator() external;
+
+    /**
+     * @notice Split TRC20 token payment between recipient and operator
+     * @param intent SplitPaymentIntent struct containing all payment parameters
+     */
+    function splitPayment(SplitPaymentIntent calldata intent) external;
+
+    /**
+     * @notice Check if a payment has been processed
+     * @param operator Operator address
+     * @param id Payment identifier
+     * @return True if payment has been processed
+     */
+    function isPaymentProcessed(address operator, bytes16 id) external view returns (bool);
+
+    /**
+     * @notice Get fee destination for an operator
+     * @param operator Operator address
+     * @return Fee destination address (zero address if not registered)
+     */
+    function getFeeDestination(address operator) external view returns (address);
+
+    /**
+     * @notice Check if an operator is registered
+     * @param operator Operator address
+     * @return True if operator is registered
+     */
+    function isOperatorRegistered(address operator) external view returns (bool);
+}
