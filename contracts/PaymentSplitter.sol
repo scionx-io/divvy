@@ -42,20 +42,6 @@ contract PaymentSplitter is IPaymentSplitter {
     }
 
     /**
-     * @notice Register operator using operator's address as fee destination
-     */
-    function registerOperator() external {
-        address oldDestination = feeDestinations[msg.sender];
-        feeDestinations[msg.sender] = msg.sender;
-
-        if (oldDestination == address(0)) {
-            emit OperatorRegistered(msg.sender, msg.sender);
-        } else {
-            emit FeeDestinationUpdated(msg.sender, oldDestination, msg.sender);
-        }
-    }
-
-    /**
      * @notice Unregister operator
      * @dev WARNING: Operator can front-run splitPayment() calls by unregistering,
      *      causing user transactions to revert. This is acceptable behavior as
@@ -73,9 +59,38 @@ contract PaymentSplitter is IPaymentSplitter {
      */
     function splitPayment(SplitPaymentIntent calldata intent)
         external
-        operatorIsRegistered(intent.operator)
-        validPayment(intent, msg.sender)
     {
+        // CRITICAL: Check for zero address BEFORE accessing mapping to avoid TRON Shasta issue
+        require(intent.operator != address(0), "Operator cannot be zero address");
+        
+        // Validate operator is registered
+        require(feeDestinations[intent.operator] != address(0), "Operator not registered");
+        
+        // Perform signature validation manually (inlined from validPayment modifier)
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                intent.recipientAmount,
+                intent.deadline,
+                intent.recipient,
+                intent.token,
+                intent.refundDestination,
+                intent.feeAmount,
+                intent.id,
+                intent.operator,
+                block.chainid,  // Prevents replay attacks (TRON supports this since v4.1.0)
+                msg.sender,
+                address(this)
+            )
+        );
+
+        // TRON TIP-191 standard message signing prefix
+        bytes32 signedMessageHash = keccak256(
+            abi.encodePacked("\x19Tron Signed Message:\n32", hash)
+        );
+        address signer = signedMessageHash.recover(intent.signature);
+
+        require(signer == intent.operator, "Invalid signature");
+        
         // Validate timing
         require(block.timestamp <= intent.deadline, "Payment expired");
 
@@ -88,7 +103,6 @@ contract PaymentSplitter is IPaymentSplitter {
 
         // Validate amounts
         require(intent.recipientAmount > 0 || intent.feeAmount > 0, "No amounts to transfer");
-        uint256 totalAmount = intent.recipientAmount + intent.feeAmount;
 
         // Validate token is a contract
         require(intent.token.code.length > 0, "Token not a contract");
@@ -110,58 +124,23 @@ contract PaymentSplitter is IPaymentSplitter {
             paymentToken.safeTransferFrom(msg.sender, feeDestination, intent.feeAmount);
         }
 
+        // Store values in local variables to avoid stack too deep error
+        address _operator = intent.operator;
+        bytes16 _id = intent.id;
+        address _recipient = intent.recipient;
+        uint256 _recipientAmount = intent.recipientAmount;
+        uint256 _feeAmount = intent.feeAmount;
+        address _token = intent.token;
+
         emit PaymentProcessed(
-            intent.operator,
-            intent.id,
-            intent.recipient,
+            _operator,
+            _id,
+            _recipient,
             msg.sender,
-            intent.recipientAmount,
-            intent.feeAmount,
-            intent.token
+            _recipientAmount,
+            _feeAmount,
+            _token
         );
-    }
-
-    /**
-     * @dev Validates that the operator is registered
-     */
-    modifier operatorIsRegistered(address operator) {
-        require(feeDestinations[operator] != address(0), "Operator not registered");
-        _;
-    }
-
-    /**
-     * @dev Validates the payment intent signature and structure
-     * @param _intent The payment intent to validate
-     * @param sender The address initiating the payment
-     * @notice TRON note: Uses block.chainid for replay protection
-     * @notice Tron Mainnet chainId: 728126428, Nile Testnet: 3448148188, Shasta Testnet: 2494104990
-     */
-    modifier validPayment(SplitPaymentIntent calldata _intent, address sender) {
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                _intent.recipientAmount,
-                _intent.deadline,
-                _intent.recipient,
-                _intent.token,
-                _intent.refundDestination,
-                _intent.feeAmount,
-                _intent.id,
-                _intent.operator,
-                block.chainid,  // Prevents replay attacks (TRON supports this since v4.1.0)
-                sender,
-                address(this)
-            )
-        );
-
-        // TRON uses "\x19TRON Signed Message:\n32" prefix for compatibility
-        // but "\x19Ethereum Signed Message:\n32" also works and is more standard
-        bytes32 signedMessageHash = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
-        );
-        address signer = signedMessageHash.recover(_intent.signature);
-
-        require(signer == _intent.operator, "Invalid signature");
-        _;
     }
 
     /**

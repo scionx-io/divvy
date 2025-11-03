@@ -5,7 +5,11 @@
   "license": "MIT",
   "dependencies": {
     "@cryptovarna/tron-contracts": "^0.4.5",
-    "tronweb": "^6.0.4",
-    "dotenv": "^16.0.0"
+    "bn.js": "^5.2.2",
+    "dotenv": "^16.0.0",
+    "tronweb": "^6.0.4"
+  },
+  "devDependencies": {
+    "chai": "^6.2.0"
   }
 }

@@ -50,11 +50,6 @@ interface IPaymentSplitter {
     function registerOperatorWithFeeDestination(address _feeDestination) external;
 
     /**
-     * @notice Register operator using operator's address as fee destination
-     */
-    function registerOperator() external;
-
-    /**
      * @notice Unregister operator
      * @dev WARNING: Operator can front-run splitPayment() calls by unregistering,
      *      causing user transactions to revert. This is acceptable behavior as
