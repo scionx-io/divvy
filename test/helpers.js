@@ -109,18 +109,26 @@ async function createSignedIntent(params, privateKey, chainId) {
   const encoded = solidityPacked(types, values);
   const hash = keccak256(encoded);
 
-  // Add TRON TIP-191 signed message prefix
+  // Add TRON TIP-191 signed message prefix (using imported ethers functions)
   const prefixedHash = keccak256(
-    solidityPacked(
-      ['string', 'bytes32'],
-      ['\x19Tron Signed Message:\n32', hash]
-    )
+    solidityPacked(['string', 'bytes32'], ['\x19Tron Signed Message:\n32', hash])
   );
 
-  // Sign with operator's private key
-  const signature = await tronWeb.trx.sign(prefixedHash.replace('0x', ''), privateKey);
+  // Use TRON's ethers SigningKey to sign the digest (this is the key fix)
+  const ethers = tronWeb.utils.ethersUtils;
+  // Ensure private key has 0x prefix for ethers (only for parsing, doesn't affect TRON compatibility)
+  const privateKeyWithPrefix = privateKey.startsWith('0x') ? privateKey : '0x' + privateKey;
+  const signingKey = new ethers.SigningKey(privateKeyWithPrefix);
+  const signature = signingKey.sign(prefixedHash);
 
-  return signature;
+  // Extract r, s, v - check if v already includes the 27 offset
+  const r = signature.r;
+  const s = signature.s;
+  // ethers.SigningKey.sign() returns v as 27/28, not 0/1, so don't add 27 again
+  const v = signature.v >= 27 ? signature.v : signature.v + 27;
+
+  // Return properly formatted signature (r + s + v in hex)
+  return r + s.slice(2) + v.toString(16).padStart(2, '0');
 }
 
 /**
