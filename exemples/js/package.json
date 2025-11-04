@@ -1,0 +1,22 @@
+{
+  "name": "divvy-examples",
+  "version": "1.0.0",
+  "description": "JavaScript examples for PaymentSplitter contract interaction",
+  "type": "module",
+  "scripts": {
+    "register": "node 01_register_operator.js",
+    "query": "node 02_query_operator.js",
+    "split": "node 03_split_payment.js",
+    "query-payment": "node 04_query_payment.js",
+    "unregister": "node 05_unregister_operator.js",
+    "workflow": "node complete_workflow.js",
+    "verify-sig": "node signature_verification_analysis.js"
+  },
+  "keywords": [
+    "tron",
+    "blockchain",
+    "payment-splitter",
+    "smart-contracts"
+  ],
+  "license": "MIT"
+}

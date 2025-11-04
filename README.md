@@ -41,6 +41,9 @@ node scripts/verify-shasta-contract.js
 
 # Run full USDT payment test
 node scripts/test-shasta-usdt.js
+
+# Get wallet address from private key
+node get_address.js  # Requires PRIVATE_KEY_SHASTA in .env
 ```
 
 ### Current Deployed Contracts (Shasta Testnet)
@@ -50,4 +53,8 @@ node scripts/test-shasta-usdt.js
 
 - **TestUSDT**: `TGSM2p5FJzrmo2QeoJH1MVMQAQH6bMbmaJ`
   - [View on TronScan](https://shasta.tronscan.org/#/contract/TGSM2p5FJzrmo2QeoJH1MVMQAQH6bMbmaJ)
+
+## Security Notice
+
+⚠️ **Important**: Never commit private keys or sensitive credentials to the repository. Always use environment variables or secure vaults to manage sensitive information.
 

@@ -1,0 +1,7 @@
+source 'https://rubygems.org'
+
+gem 'tron.rb', '1.2.3'
+
+gem 'securerandom'
+gem 'dotenv'
+gem 'bigdecimal'

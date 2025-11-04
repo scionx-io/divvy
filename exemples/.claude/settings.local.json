@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gem dependency:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
