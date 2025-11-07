@@ -61,12 +61,16 @@ def main
 
     # Check token balance
     balance_result = contract_service.call_contract(
-      contract_address: MOCK_TOKEN_ADDRESS,
+      contract_address: TOKEN_ADDRESS,
       function: 'balanceOf(address)',
       parameters: [payer_address]
     )
-    balance = balance_result.dig('constant_result', 0)
-    puts "Payer token balance: #{from_sun(balance.to_i(16))} tokens" if balance
+    if balance_result && balance_result.is_a?(Hash)
+      balance = balance_result.dig('constant_result', 0)
+      puts "Payer token balance: #{from_sun(balance.to_i(16))} tokens" if balance
+    elsif balance_result
+      puts "Payer token balance: #{from_sun(balance_result.to_i(16))} tokens"
+    end
     puts
 
     # Approve token spending
@@ -74,30 +78,47 @@ def main
     puts "Approving #{from_sun(total_amount)} tokens..."
 
     approve_tx = contract_service.trigger_contract(
-      contract_address: MOCK_TOKEN_ADDRESS,
+      contract_address: TOKEN_ADDRESS,
       function: 'approve(address,uint256)',
-      parameters: [PAYMENT_SPLITTER_ADDRESS, total_amount],
+      parameters: [CONTRACT_ADDRESS, total_amount],
       private_key: sender_private_key
     )
 
     approve_tx_id = approve_tx['txid'] || approve_tx['txID']
-    wait_for_transaction(client, approve_tx_id)
+    client.transaction_service.wait_for_transaction(approve_tx_id)
 
-    # Create signed intent (Note: Ruby version uses simpler signature than JS)
+    # Create signed intent using TIP-191
     puts
     puts 'Creating signed payment intent...'
 
-    # For Ruby/tron.rb, we use a simplified approach
-    # The signature creation will be handled by the contract interaction
-    signature = '0x' + '0' * 130 # Placeholder - tron.rb handles signing
+    # Get chain ID for Nile network
+    chain_id = 0xcd8690dc # Nile testnet chain ID
 
+    signed_intent = create_signed_intent(
+      {
+        recipient: recipient_address,
+        token_address: TOKEN_ADDRESS,
+        recipient_amount: recipient_amount,
+        operator_address: operator_address,
+        fee_amount: fee_amount,
+        payment_id: payment_id,
+        deadline: deadline,
+        refund_destination: refund_destination,
+        payer_address: payer_address,
+        splitter_address: CONTRACT_ADDRESS
+      },
+      operator_private_key,
+      chain_id
+    )
+
+    signature = signed_intent[:signature]
     puts "Signature created: #{signature[0..19]}..."
     puts
 
     # Build intent array (must match contract struct order)
     intent_params = [
       recipient_address,      # recipient
-      MOCK_TOKEN_ADDRESS,     # token
+      TOKEN_ADDRESS,          # token
       recipient_amount,       # recipientAmount
       operator_address,       # operator
       fee_amount,            # feeAmount
@@ -110,20 +131,20 @@ def main
     # Execute split payment
     puts 'Executing split payment...'
     split_tx = contract_service.trigger_contract(
-      contract_address: PAYMENT_SPLITTER_ADDRESS,
+      contract_address: CONTRACT_ADDRESS,
       function: 'splitPayment((address,address,uint256,address,uint256,bytes16,uint256,address,bytes))',
       parameters: [intent_params],
       private_key: sender_private_key
     )
 
     split_tx_id = split_tx['txid'] || split_tx['txID']
-    wait_for_transaction(client, split_tx_id)
+    client.transaction_service.wait_for_transaction(split_tx_id)
 
     # Verify payment was processed
     puts
     puts 'Verifying payment...'
     is_processed = contract_service.payment_processed?(
-      PAYMENT_SPLITTER_ADDRESS,
+      CONTRACT_ADDRESS,
       operator_address,
       payment_id
     )

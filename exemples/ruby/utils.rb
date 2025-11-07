@@ -12,12 +12,12 @@ require 'dotenv'
 Dotenv.load(File.expand_path('.env', __dir__))
 
 # Contract addresses from .env
-PAYMENT_SPLITTER_ADDRESS = ENV['PAYMENT_SPLITTER_SHASTA_ADDRESS'] || 'TU5kasmGMFTGZTS9cYvyX5WvYDAQoKdsKj'
-MOCK_TOKEN_ADDRESS = ENV['TEST_TOKEN_ADDRESS'] || 'TFz4HPavWtb6LtEkpESUnMQ61JAN7HHexj'
+CONTRACT_ADDRESS = ENV['CONTRACT_ADDRESS'] || 'TBHRkgDhbraCfYkuaRTmVzhiVakcjEPTtj'
+TOKEN_ADDRESS = ENV['TOKEN_ADDRESS'] || 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf'
 
-# Initialize Tron client for Shasta testnet
+# Initialize Tron client for Nile testnet
 def init_tron_client
-  network = ENV['TRON_NETWORK'] || 'shasta'
+  network = ENV['TRON_NETWORK'] || 'nile'
 
   Tron::Client.new(
     api_key: ENV['TRONGRID_API_KEY'],
