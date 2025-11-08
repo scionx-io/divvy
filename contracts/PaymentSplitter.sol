@@ -86,21 +86,18 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
     }
 
     /**
-     * @notice Split TRC20 token payment between recipient and operator
-     * @param intent SplitPaymentIntent struct containing all payment parameters
+     * @notice Validates payment intent signature and parameters
+     * @param intent The payment intent to validate
+     * @dev Internal function to avoid code duplication between splitPayment and swapAndSplitPayment
      */
-    function splitPayment(SplitPaymentIntent calldata intent)
-        external
-        nonReentrant
-        whenNotPaused
-    {
+    function _validateIntent(SplitPaymentIntent calldata intent) internal view {
         // CRITICAL: Check for zero address BEFORE accessing mapping to avoid TRON Shasta issue
         require(intent.operator != address(0), "Operator cannot be zero address");
-        
+
         // Validate operator is registered
         require(feeDestinations[intent.operator] != address(0), "Operator not registered");
-        
-        // Perform signature validation manually (inlined from validPayment modifier)
+
+        // Perform signature validation (TRON TIP-191 standard)
         bytes32 hash = keccak256(
             abi.encodePacked(
                 intent.recipientAmount,
@@ -124,7 +121,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
         address signer = signedMessageHash.recover(intent.signature);
 
         require(signer == intent.operator, "Invalid signature");
-        
+
         // Validate timing
         require(block.timestamp <= intent.deadline, "Payment expired");
 
@@ -140,6 +137,19 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
 
         // Validate token is a contract
         require(intent.token.code.length > 0, "Token not a contract");
+    }
+
+    /**
+     * @notice Split TRC20 token payment between recipient and operator
+     * @param intent SplitPaymentIntent struct containing all payment parameters
+     */
+    function splitPayment(SplitPaymentIntent calldata intent)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        // Validate intent
+        _validateIntent(intent);
 
         // CRITICAL: Mark as processed BEFORE any external calls (Checks-Effects-Interactions)
         processedPayments[intent.operator][intent.id] = true;
@@ -222,54 +232,11 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
     ) external payable nonReentrant whenNotPaused {
         // === VALIDATION PHASE ===
 
-        // CRITICAL: Check operator is not zero address (TRON Shasta compatibility)
-        require(intent.operator != address(0), "Operator cannot be zero address");
-
-        // Validate operator is registered
-        require(feeDestinations[intent.operator] != address(0), "Operator not registered");
-
-        // Perform signature validation (TRON TIP-191 standard)
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                intent.recipientAmount,
-                intent.deadline,
-                intent.recipient,
-                intent.token,
-                intent.refundDestination,
-                intent.feeAmount,
-                intent.id,
-                intent.operator,
-                block.chainid,
-                msg.sender,
-                address(this)
-            )
-        );
-
-        bytes32 signedMessageHash = keccak256(
-            abi.encodePacked("\x19Tron Signed Message:\n32", hash)
-        );
-        address signer = signedMessageHash.recover(intent.signature);
-
-        require(signer == intent.operator, "Invalid signature");
-
-        // Validate timing
-        require(block.timestamp <= intent.deadline, "Payment expired");
-
-        // Validate addresses
-        require(intent.recipient != address(0), "Invalid recipient address");
-        require(intent.token != address(0), "Invalid token address");
-
-        // Check if already processed
-        require(!processedPayments[intent.operator][intent.id], "Payment already processed");
-
-        // Validate amounts
-        require(intent.recipientAmount > 0 || intent.feeAmount > 0, "No amounts to transfer");
+        // Validate intent (includes operator, signature, timing, addresses, amounts, token contract check)
+        _validateIntent(intent);
 
         // Validate we're actually swapping different tokens
         require(tokenIn != intent.token, "No swap needed");
-
-        // Validate token is a contract
-        require(intent.token.code.length > 0, "Token not a contract");
 
         // Calculate exact output needed
         uint256 neededAmount = intent.recipientAmount + intent.feeAmount;
