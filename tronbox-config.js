@@ -24,7 +24,7 @@ module.exports = {
     development: {
       privateKey: process.env.PRIVATE_KEY_DEV || '0000000000000000000000000000000000000000000000000000000000000001',
       userFeePercentage: 0,
-      feeLimit: 200 * 1e6,
+      feeLimit: 1000 * 1e6,  // Increased to 1000 TRX for large contracts
       fullHost: 'http://127.0.0.1:9090',
       network_id: '9'
     },
@@ -32,7 +32,7 @@ module.exports = {
     testing: {
       privateKey: process.env.PRIVATE_KEY_DEV || '0000000000000000000000000000000000000000000000000000000000000001',
       userFeePercentage: 0,
-      feeLimit: 200 * 1e6,
+      feeLimit: 1000 * 1e6,  // Increased to 1000 TRX for large contracts
       fullHost: 'http://127.0.0.1:9090',
       network_id: '9'
     }

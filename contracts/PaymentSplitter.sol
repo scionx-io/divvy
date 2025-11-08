@@ -41,6 +41,9 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
     /// @dev Mapping to track processed payments: operator => payment ID => processed
     mapping(address => mapping(bytes16 => bool)) private processedPayments;
 
+    /// @dev Maximum deadline duration (30 days in seconds)
+    uint256 public constant MAX_DEADLINE_DURATION = 30 days;
+
     /**
      * @notice Initialize PaymentSplitter with SunSwap V3 SwapRouter and WTRX
      * @param _swapRouter SunSwap V3 SwapRouter address for this network
@@ -124,6 +127,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
 
         // Validate timing
         require(block.timestamp <= intent.deadline, "Payment expired");
+        require(intent.deadline <= block.timestamp + MAX_DEADLINE_DURATION, "Deadline too far");
 
         // Validate addresses
         require(intent.recipient != address(0), "Invalid recipient address");
