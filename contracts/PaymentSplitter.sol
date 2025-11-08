@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@cryptovarna/tron-contracts/contracts/token/TRC20/ITRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/token/TRC20/utils/SafeTRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/cryptography/ECDSA.sol";
+import "@cryptovarna/tron-contracts/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/IPaymentSplitter.sol";
 import "./interfaces/ISwapRouter.sol";
 
@@ -11,10 +12,10 @@ import "./interfaces/ISwapRouter.sol";
  * @title PaymentSplitter
  * @dev Splits TRC20 token payments between recipients and operators with fees
  * @notice Only supports standard TRC20 tokens (no fee-on-transfer or rebasing tokens)
- * @notice Uses direct transfers (no reentrancy risk, no need for ReentrancyGuard)
  * @notice Deployed on TRON network
+ * @notice Uses ReentrancyGuard to prevent reentrant attacks during external calls
  */
-contract PaymentSplitter is IPaymentSplitter {
+contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard {
     using SafeTRC20 for ITRC20;
     using ECDSA for bytes32;
 
@@ -83,6 +84,7 @@ contract PaymentSplitter is IPaymentSplitter {
      */
     function splitPayment(SplitPaymentIntent calldata intent)
         external
+        nonReentrant
     {
         // CRITICAL: Check for zero address BEFORE accessing mapping to avoid TRON Shasta issue
         require(intent.operator != address(0), "Operator cannot be zero address");
@@ -209,7 +211,7 @@ contract PaymentSplitter is IPaymentSplitter {
         address tokenIn,
         uint256 maxWillingToPay,
         uint24 poolFee
-    ) external payable {
+    ) external payable nonReentrant {
         // === VALIDATION PHASE ===
 
         // CRITICAL: Check operator is not zero address (TRON Shasta compatibility)
