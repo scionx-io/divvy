@@ -5,6 +5,8 @@ import "@cryptovarna/tron-contracts/contracts/token/TRC20/ITRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/token/TRC20/utils/SafeTRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/cryptography/ECDSA.sol";
 import "@cryptovarna/tron-contracts/contracts/security/ReentrancyGuard.sol";
+import "@cryptovarna/tron-contracts/contracts/access/Ownable.sol";
+import "@cryptovarna/tron-contracts/contracts/utils/Context.sol";
 import "./interfaces/IPaymentSplitter.sol";
 import "./interfaces/ISwapRouter.sol";
 
@@ -14,8 +16,9 @@ import "./interfaces/ISwapRouter.sol";
  * @notice Only supports standard TRC20 tokens (no fee-on-transfer or rebasing tokens)
  * @notice Deployed on TRON network
  * @notice Uses ReentrancyGuard to prevent reentrant attacks during external calls
+ * @notice Uses Ownable for access control of administrative functions
  */
-contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard {
+contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable {
     using SafeTRC20 for ITRC20;
     using ECDSA for bytes32;
 
@@ -358,5 +361,24 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard {
             amountSpent,
             tokenIn  // address(0) for TRX, token address for TRC20
         );
+    }
+
+    /**
+     * @notice Owner-only function to withdraw any accidental token deposits
+     * @param tokenAddress Address of the token to withdraw (address(0) for native TRX)
+     * @param amount Amount to withdraw
+     * @param recipient Address to send the withdrawn tokens to
+     */
+    function withdrawToken(address tokenAddress, uint256 amount, address recipient) external onlyOwner {
+        require(recipient != address(0), "Invalid recipient");
+
+        if (tokenAddress == address(0)) {
+            // Withdraw native TRX
+            (bool success, ) = payable(recipient).call{value: amount}("");
+            require(success, "TRX transfer failed");
+        } else {
+            // Withdraw tokens
+            ITRC20(tokenAddress).safeTransfer(recipient, amount);
+        }
     }
 }
