@@ -51,3 +51,6 @@ key.json
 *.key
 .claude/settings.local.json
 examples/.claude/settings.local.json
+docs/*
+sunswap-v3-contracts/
+smart-exchange-router/

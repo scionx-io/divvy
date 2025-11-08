@@ -5,6 +5,7 @@ import "@cryptovarna/tron-contracts/contracts/token/TRC20/ITRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/token/TRC20/utils/SafeTRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/cryptography/ECDSA.sol";
 import "./interfaces/IPaymentSplitter.sol";
+import "./interfaces/ISwapRouter.sol";
 
 /**
  * @title PaymentSplitter
@@ -17,11 +18,34 @@ contract PaymentSplitter is IPaymentSplitter {
     using SafeTRC20 for ITRC20;
     using ECDSA for bytes32;
 
+    /// @dev SunSwap V3 SwapRouter for exact output swaps
+    ISwapRouter public immutable swapRouter;
+
+    /// @dev Wrapped TRX (WTRX) contract address
+    address public immutable WTRX;
+
+    /// @dev Represents native TRX
+    address public constant NATIVE_CURRENCY = address(0);
+
     /// @dev Mapping from operator address to their fee destination
     mapping(address => address) private feeDestinations;
 
     /// @dev Mapping to track processed payments: operator => payment ID => processed
     mapping(address => mapping(bytes16 => bool)) private processedPayments;
+
+    /**
+     * @notice Initialize PaymentSplitter with SunSwap V3 SwapRouter and WTRX
+     * @param _swapRouter SunSwap V3 SwapRouter address for this network
+     * @param _wtrx Wrapped TRX (WTRX) address for this network
+     * @dev Mainnet WTRX: TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR
+     * @dev Nile WTRX: Check SunSwap docs for testnet address
+     */
+    constructor(address _swapRouter, address _wtrx) {
+        require(_swapRouter != address(0), "Invalid swap router");
+        require(_wtrx != address(0), "Invalid WTRX");
+        swapRouter = ISwapRouter(_swapRouter);
+        WTRX = _wtrx;
+    }
 
     /**
      * @notice Register operator with custom fee destination
@@ -169,5 +193,168 @@ contract PaymentSplitter is IPaymentSplitter {
      */
     function isOperatorRegistered(address operator) external view returns (bool) {
         return feeDestinations[operator] != address(0);
+    }
+
+    /**
+     * @notice Swap input token for exact output amount and split between recipient and operator
+     * @param intent Payment intent (intent.token is output token, amounts are exact)
+     * @param tokenIn Input token address (address(0) for native TRX)
+     * @param maxWillingToPay Maximum input tokens user will spend
+     * @param poolFee SunSwap V3 pool fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
+     * @dev Uses SunSwap V3 exactOutputSingle for guaranteed exact output amounts
+     * @dev Refunds unused input tokens to msg.sender
+     */
+    function swapAndSplitPayment(
+        SplitPaymentIntent calldata intent,
+        address tokenIn,
+        uint256 maxWillingToPay,
+        uint24 poolFee
+    ) external payable {
+        // === VALIDATION PHASE ===
+
+        // CRITICAL: Check operator is not zero address (TRON Shasta compatibility)
+        require(intent.operator != address(0), "Operator cannot be zero address");
+
+        // Validate operator is registered
+        require(feeDestinations[intent.operator] != address(0), "Operator not registered");
+
+        // Perform signature validation (TRON TIP-191 standard)
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                intent.recipientAmount,
+                intent.deadline,
+                intent.recipient,
+                intent.token,
+                intent.refundDestination,
+                intent.feeAmount,
+                intent.id,
+                intent.operator,
+                block.chainid,
+                msg.sender,
+                address(this)
+            )
+        );
+
+        bytes32 signedMessageHash = keccak256(
+            abi.encodePacked("\x19Tron Signed Message:\n32", hash)
+        );
+        address signer = signedMessageHash.recover(intent.signature);
+
+        require(signer == intent.operator, "Invalid signature");
+
+        // Validate timing
+        require(block.timestamp <= intent.deadline, "Payment expired");
+
+        // Validate addresses
+        require(intent.recipient != address(0), "Invalid recipient address");
+        require(intent.token != address(0), "Invalid token address");
+
+        // Check if already processed
+        require(!processedPayments[intent.operator][intent.id], "Payment already processed");
+
+        // Validate amounts
+        require(intent.recipientAmount > 0 || intent.feeAmount > 0, "No amounts to transfer");
+
+        // Validate we're actually swapping different tokens
+        require(tokenIn != intent.token, "No swap needed");
+
+        // Validate token is a contract
+        require(intent.token.code.length > 0, "Token not a contract");
+
+        // Calculate exact output needed
+        uint256 neededAmount = intent.recipientAmount + intent.feeAmount;
+
+        // === EFFECTS PHASE ===
+
+        // Mark as processed BEFORE external calls (Checks-Effects-Interactions)
+        processedPayments[intent.operator][intent.id] = true;
+
+        // === INTERACTIONS PHASE ===
+
+        uint256 amountSpent;
+
+        if (tokenIn == NATIVE_CURRENCY) {
+            // Native TRX swap
+            require(msg.value == maxWillingToPay, "Incorrect TRX amount");
+
+            // Execute swap: TRX -> exact output token
+            // SwapRouter will automatically wrap TRX to WTRX internally
+            amountSpent = swapRouter.exactOutputSingle{value: maxWillingToPay}(
+                ISwapRouter.ExactOutputSingleParams({
+                    tokenIn: WTRX,  // Use WTRX, router auto-wraps the TRX
+                    tokenOut: intent.token,
+                    fee: poolFee,
+                    recipient: address(this),
+                    deadline: intent.deadline,
+                    amountOut: neededAmount,
+                    amountInMaximum: maxWillingToPay,
+                    sqrtPriceLimitX96: 0
+                })
+            );
+
+            // Refund unused TRX to user
+            if (amountSpent < maxWillingToPay) {
+                uint256 refund = maxWillingToPay - amountSpent;
+                (bool success,) = payable(msg.sender).call{value: refund}("");
+                require(success, "TRX refund failed");
+            }
+        } else {
+            // TRC20 swap
+            require(msg.value == 0, "Don't send TRX for token swap");
+
+            ITRC20 inputToken = ITRC20(tokenIn);
+            require(inputToken.balanceOf(msg.sender) >= maxWillingToPay, "Insufficient balance");
+            require(inputToken.allowance(msg.sender, address(this)) >= maxWillingToPay, "Insufficient allowance");
+            require(tokenIn.code.length > 0, "Input token not a contract");
+
+            // Pull input tokens from user
+            inputToken.safeTransferFrom(msg.sender, address(this), maxWillingToPay);
+
+            // Approve SwapRouter to spend input tokens
+            inputToken.approve(address(swapRouter), maxWillingToPay);
+
+            // Execute swap: tokenIn -> exact output token
+            amountSpent = swapRouter.exactOutputSingle(
+                ISwapRouter.ExactOutputSingleParams({
+                    tokenIn: tokenIn,
+                    tokenOut: intent.token,
+                    fee: poolFee,
+                    recipient: address(this),
+                    deadline: intent.deadline,
+                    amountOut: neededAmount,
+                    amountInMaximum: maxWillingToPay,
+                    sqrtPriceLimitX96: 0
+                })
+            );
+
+            // Refund unused input tokens to user
+            if (amountSpent < maxWillingToPay) {
+                uint256 refund = maxWillingToPay - amountSpent;
+                inputToken.safeTransfer(msg.sender, refund);
+            }
+        }
+
+        // Distribute output tokens to recipients
+        ITRC20 outputToken = ITRC20(intent.token);
+        address feeDestination = feeDestinations[intent.operator];
+
+        if (intent.recipientAmount > 0) {
+            outputToken.safeTransfer(intent.recipient, intent.recipientAmount);
+        }
+
+        if (intent.feeAmount > 0) {
+            outputToken.safeTransfer(feeDestination, intent.feeAmount);
+        }
+
+        // Emit event with what user actually spent
+        // Note: tokenIn remains as passed (address(0) for native TRX) to show what user paid with
+        emit SwapPaymentProcessed(
+            intent.operator,
+            intent.id,
+            intent.recipient,
+            msg.sender,
+            amountSpent,
+            tokenIn  // address(0) for TRX, token address for TRC20
+        );
     }
 }
