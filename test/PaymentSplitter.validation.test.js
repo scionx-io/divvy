@@ -186,6 +186,47 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
   });
 
+  describe('Time Validation', function () {
+
+    it('rejects expired payment intents', async function () {
+      const { intentArray } = await createIntent({
+        recipientAmount: tronWeb.toSun(100),
+        feeAmount: tronWeb.toSun(10),
+        recipient,
+        tokenAddress: token.address,
+        refundDestination: payer,
+        operatorAddress: operator,
+        payerAddress: payer,
+        splitterAddress: splitter.address,
+        deadline: Math.floor(Date.now() / 1000) - 60  // 1 minute ago
+      }, operatorPrivateKey, chainId);
+
+      await expectRevert(
+        splitter.splitPayment(intentArray, { from: payer }),
+        'Payment expired'
+      );
+    });
+
+    it('accepts payment intent with valid deadline within 30 days', async function () {
+      const validDeadline = Math.floor(Date.now() / 1000) + (15 * 24 * 60 * 60);  // 15 days from now
+      
+      const { intentArray } = await createIntent({
+        recipientAmount: tronWeb.toSun(100),
+        feeAmount: tronWeb.toSun(10),
+        recipient,
+        tokenAddress: token.address,
+        refundDestination: payer,
+        operatorAddress: operator,
+        payerAddress: payer,
+        splitterAddress: splitter.address,
+        deadline: validDeadline
+      }, operatorPrivateKey, chainId);
+
+      // This should succeed
+      await splitter.splitPayment(intentArray, { from: payer });
+    });
+  });
+
   describe('Edge Cases', function () {
 
     it('handles maximum uint256 amounts correctly', async function () {
