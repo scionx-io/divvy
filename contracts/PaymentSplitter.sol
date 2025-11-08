@@ -319,7 +319,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
             inputToken.safeTransferFrom(msg.sender, address(this), maxWillingToPay);
 
             // Approve SwapRouter to spend input tokens
-            inputToken.approve(address(swapRouter), maxWillingToPay);
+            inputToken.safeApprove(address(swapRouter), maxWillingToPay);
 
             // Execute swap: tokenIn -> exact output token
             amountSpent = swapRouter.exactOutputSingle(
@@ -340,6 +340,9 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
                 uint256 refund = maxWillingToPay - amountSpent;
                 inputToken.safeTransfer(msg.sender, refund);
             }
+            
+            // Reset approval to zero for security
+            inputToken.safeApprove(address(swapRouter), 0);
         }
 
         // Distribute output tokens to recipients
