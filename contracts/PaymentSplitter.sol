@@ -8,6 +8,7 @@ import "@cryptovarna/tron-contracts/contracts/security/ReentrancyGuard.sol";
 import "@cryptovarna/tron-contracts/contracts/access/Ownable.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/Context.sol";
 import "@cryptovarna/tron-contracts/contracts/security/Pausable.sol";
+import "./utils/Sweepable.sol";
 import "./interfaces/IPaymentSplitter.sol";
 import "./interfaces/ISwapRouter.sol";
 
@@ -19,8 +20,9 @@ import "./interfaces/ISwapRouter.sol";
  * @notice Uses ReentrancyGuard to prevent reentrant attacks during external calls
  * @notice Uses Ownable for access control of administrative functions
  * @notice Uses Pausable to allow pausing functionality in emergency situations
+ * @notice Uses Sweepable to allow sweeping of stuck tokens by designated sweeper
  */
-contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable {
+contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable, Sweepable {
     using SafeTRC20 for ITRC20;
     using ECDSA for bytes32;
 
@@ -369,24 +371,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
         );
     }
 
-    /**
-     * @notice Owner-only function to withdraw any accidental token deposits
-     * @param tokenAddress Address of the token to withdraw (address(0) for native TRX)
-     * @param amount Amount to withdraw
-     * @param recipient Address to send the withdrawn tokens to
-     */
-    function withdrawToken(address tokenAddress, uint256 amount, address recipient) external onlyOwner {
-        require(recipient != address(0), "Invalid recipient");
 
-        if (tokenAddress == address(0)) {
-            // Withdraw native TRX
-            (bool success, ) = payable(recipient).call{value: amount}("");
-            require(success, "TRX transfer failed");
-        } else {
-            // Withdraw tokens
-            ITRC20(tokenAddress).safeTransfer(recipient, amount);
-        }
-    }
 
     /**
      * @notice Pause the contract, preventing payment processing (owner only)
