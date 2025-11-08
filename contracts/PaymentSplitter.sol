@@ -7,6 +7,7 @@ import "@cryptovarna/tron-contracts/contracts/utils/cryptography/ECDSA.sol";
 import "@cryptovarna/tron-contracts/contracts/security/ReentrancyGuard.sol";
 import "@cryptovarna/tron-contracts/contracts/access/Ownable.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/Context.sol";
+import "@cryptovarna/tron-contracts/contracts/security/Pausable.sol";
 import "./interfaces/IPaymentSplitter.sol";
 import "./interfaces/ISwapRouter.sol";
 
@@ -17,8 +18,9 @@ import "./interfaces/ISwapRouter.sol";
  * @notice Deployed on TRON network
  * @notice Uses ReentrancyGuard to prevent reentrant attacks during external calls
  * @notice Uses Ownable for access control of administrative functions
+ * @notice Uses Pausable to allow pausing functionality in emergency situations
  */
-contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable {
+contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable {
     using SafeTRC20 for ITRC20;
     using ECDSA for bytes32;
 
@@ -88,6 +90,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable {
     function splitPayment(SplitPaymentIntent calldata intent)
         external
         nonReentrant
+        whenNotPaused
     {
         // CRITICAL: Check for zero address BEFORE accessing mapping to avoid TRON Shasta issue
         require(intent.operator != address(0), "Operator cannot be zero address");
@@ -214,7 +217,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable {
         address tokenIn,
         uint256 maxWillingToPay,
         uint24 poolFee
-    ) external payable nonReentrant {
+    ) external payable nonReentrant whenNotPaused {
         // === VALIDATION PHASE ===
 
         // CRITICAL: Check operator is not zero address (TRON Shasta compatibility)
@@ -380,5 +383,19 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable {
             // Withdraw tokens
             ITRC20(tokenAddress).safeTransfer(recipient, amount);
         }
+    }
+
+    /**
+     * @notice Pause the contract, preventing payment processing (owner only)
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @notice Unpause the contract, allowing payment processing to resume (owner only)
+     */
+    function unpause() external onlyOwner {
+        _unpause();
     }
 }
