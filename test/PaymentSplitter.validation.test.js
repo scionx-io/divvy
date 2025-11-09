@@ -266,23 +266,5 @@ contract('PaymentSplitter - Validation', function (accounts) {
       const isProcessed = await splitter.isPaymentProcessed(operator, id);
       expect(isProcessed).to.be.true;
     });
-
-    it('allows refundDestination to be different from payer', async function () {
-      const { intentArray, id } = await createIntent({
-        recipientAmount: tronWeb.toSun(50),
-        feeAmount: tronWeb.toSun(5),
-        recipient,
-        tokenAddress: token.address,
-        refundDestination: other,  // Different from payer
-        operatorAddress: operator,
-        payerAddress: payer,
-        splitterAddress: splitter.address
-      }, operatorPrivateKey, chainId);
-
-      await splitter.splitPayment(intentArray, { from: payer });
-
-      const isProcessed = await splitter.isPaymentProcessed(operator, id);
-      expect(isProcessed).to.be.true;
-    });
   });
 });

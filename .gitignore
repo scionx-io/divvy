@@ -54,3 +54,5 @@ examples/.claude/settings.local.json
 docs/*
 sunswap-v3-contracts/
 smart-exchange-router/
+CLAUDE.md
+QWEN.md
