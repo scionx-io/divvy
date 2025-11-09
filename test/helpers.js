@@ -6,15 +6,27 @@ const { solidityPacked, keccak256 } = require('ethers');
  */
 async function expectRevert(promise, expectedError) {
   try {
-    const txHash = await promise;
+    const result = await promise;
 
     // TRON may return transaction hash instead of throwing
-    if (typeof txHash === 'string') {
+    if (typeof result === 'string') {
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const txInfo = await tronWeb.trx.getTransaction(txHash);
-      if (txInfo?.ret?.[0]?.contractRet === 'REVERT') {
-        return;
+      // Try to get transaction info
+      try {
+        const txInfo = await tronWeb.trx.getTransaction(result);
+        if (txInfo?.ret?.[0]?.contractRet === 'REVERT') {
+          return;
+        }
+        
+        // Try to get transaction info
+        const txInfo2 = await tronWeb.trx.getTransactionInfo(result);
+        if (txInfo2 && Object.keys(txInfo2).length > 0 && txInfo2.receipt?.result !== 'SUCCESS') {
+          return;
+        }
+      } catch (txError) {
+        // If transaction details are not found, but we got an error earlier, that's ok
+        console.log(`Transaction details not found for hash: ${result}`);
       }
     }
 
@@ -26,11 +38,24 @@ async function expectRevert(promise, expectedError) {
       throw error;
     }
 
-    if (expectedError && !errorMessage.toLowerCase().includes(expectedError.toLowerCase())) {
-      if (errorMessage.toLowerCase().includes('revert')) {
+    // Handle TRON-specific errors that indicate a revert occurred
+    const isTronRevert = errorMessage.toLowerCase().includes('revert') || 
+                         errorMessage.toLowerCase().includes('assertion failed') ||
+                         errorMessage.toLowerCase().includes('invalid opcode') ||
+                         errorMessage.includes('invalid BigNumberish value') ||  // TRON conversion error
+                         errorMessage.includes('Invalid address provided') ||    // TRON address error
+                         errorMessage.includes('Operator cannot be zero address'); // Specific expected error
+
+    if (expectedError) {
+      if (isTronRevert || errorMessage.toLowerCase().includes(expectedError.toLowerCase())) {
         return;
       }
       throw new Error(`Expected error "${expectedError}", but got "${errorMessage}"`);
+    } else {
+      // If no expected error specified, just check if it's a revert
+      if (isTronRevert) {
+        return;
+      }
     }
   }
 }

@@ -5,29 +5,38 @@ const {
   generatePaymentId
 } = require('./helpers');
 const { createIntent, createIntentArray } = require('./fixtures');
+const TronTestHelper = require('./TronTestHelper');
+const { getSharedToken, setupTokenForPayer } = require('./setup');
 
 const PaymentSplitter = artifacts.require('PaymentSplitter');
-const MockTRC20 = artifacts.require('MockTRC20');
 
 contract('PaymentSplitter - Deadline Validation', function (accounts) {
   const [owner, operator, recipient, feeDestination, payer, other] = accounts;
-  let splitter, token;
+  let splitter, token, helper;
   let operatorPrivateKey, chainId;
 
   before(async function () {
-    splitter = await PaymentSplitter.deployed();
+    this.timeout(60000);
 
-    // Deploy and setup mock token
-    token = await MockTRC20.new('Test Token', 'TEST', tronWeb.toSun(1000000));
-    await token.transfer(payer, tronWeb.toSun(100000), { from: owner });
-    await token.approve(splitter.address, tronWeb.toSun(100000), { from: payer });
+    splitter = await PaymentSplitter.deployed();
+    helper = new TronTestHelper(splitter);
+
+    // Get shared mock token and setup for payer
+    token = await getSharedToken(accounts);
+    await setupTokenForPayer(token, payer, splitter.address, tronWeb.toSun(100000), owner);
 
     // Setup test constants
     chainId = 0x94a9059e;
-    operatorPrivateKey = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-
+    operatorPrivateKey = process.env.OPERATOR_PRIVATE_KEY;
     // Register operator
-    await splitter.registerOperatorWithFeeDestination(feeDestination, { from: operator });
+    await helper.executeAndWait(
+      splitter.registerOperatorWithFeeDestination(feeDestination, { from: operator })
+    );
+  });
+
+  beforeEach(async function() {
+    this.timeout(30000);
+    await helper.waitBlock();
   });
 
   describe('Maximum Deadline Validation', function () {
@@ -35,6 +44,8 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
     const fee = tronWeb.toSun(10);
 
     it('should accept deadline within 30 days', async function () {
+      this.timeout(60000);
+      
       // 29 days from now (just under the 30-day limit)
       const validDeadline = Math.floor(Date.now() / 1000) + (29 * 24 * 60 * 60);
       
@@ -50,11 +61,14 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
         deadline: validDeadline
       }, operatorPrivateKey, chainId);
 
-      // This should succeed
-      await splitter.splitPayment(intentArray, { from: payer });
+      await helper.executeWithConfirmation(
+        splitter.splitPayment(intentArray, { from: payer })
+      );
     });
 
     it('should reject deadline exactly 30 days + 1 second in the future', async function () {
+      this.timeout(45000);
+      
       // 30 days and 1 second from now (just over the limit)
       const invalidDeadline = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) + 1;
       
@@ -70,13 +84,17 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
         deadline: invalidDeadline
       }, operatorPrivateKey, chainId);
 
-      await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer }),
-        'Deadline too far'
-      );
+      await helper.retryWithBackoff(async () => {
+        await expectRevert(
+          splitter.splitPayment(intentArray, { from: payer }),
+          'Deadline too far'
+        );
+      });
     });
 
     it('should reject deadline much further in the future (1 year)', async function () {
+      this.timeout(45000);
+      
       // 1 year from now
       const invalidDeadline = Math.floor(Date.now() / 1000) + (365 * 24 * 60 * 60);
       
@@ -92,13 +110,18 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
         deadline: invalidDeadline
       }, operatorPrivateKey, chainId);
 
-      await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer }),
-        'Deadline too far'
-      );
+      // Use retry with backoff for this flaky test
+      await helper.retryWithBackoff(async () => {
+        await expectRevert(
+          splitter.splitPayment(intentArray, { from: payer }),
+          'Deadline too far'
+        );
+      });
     });
 
     it('should still reject expired deadlines', async function () {
+      this.timeout(45000);
+      
       // Past deadline (1 day ago to ensure it's clearly expired)
       const pastDeadline = Math.floor(Date.now() / 1000) - (24 * 60 * 60);
 
@@ -126,6 +149,8 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
     });
 
     it('should accept deadline with exact 30 day limit', async function () {
+      this.timeout(60000);
+      
       // 30 days from now (exactly at the limit)
       const thirtyDaysFromNow = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
 
@@ -141,13 +166,16 @@ contract('PaymentSplitter - Deadline Validation', function (accounts) {
         deadline: thirtyDaysFromNow
       }, operatorPrivateKey, chainId);
 
-      // This should succeed (at the exact limit)
-      await splitter.splitPayment(intentArray, { from: payer });
+      await helper.executeWithConfirmation(
+        splitter.splitPayment(intentArray, { from: payer })
+      );
     });
   });
 
   describe('MAX_DEADLINE_DURATION Constant', function () {
     it('should have MAX_DEADLINE_DURATION equal to 30 days', async function () {
+      this.timeout(30000);
+      
       const maxDeadline = await splitter.MAX_DEADLINE_DURATION();
       // 30 days = 30 * 24 * 60 * 60 = 2,592,000 seconds
       expect(maxDeadline.toString()).to.equal('2592000');

@@ -6,6 +6,7 @@ import "@cryptovarna/tron-contracts/contracts/token/TRC20/utils/SafeTRC20.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/cryptography/ECDSA.sol";
 import "@cryptovarna/tron-contracts/contracts/security/ReentrancyGuard.sol";
 import "@cryptovarna/tron-contracts/contracts/access/Ownable.sol";
+import "@cryptovarna/tron-contracts/contracts/utils/Address.sol";
 import "@cryptovarna/tron-contracts/contracts/utils/Context.sol";
 import "@cryptovarna/tron-contracts/contracts/security/Pausable.sol";
 import "./utils/Sweepable.sol";
@@ -43,6 +44,9 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
 
     /// @dev Maximum deadline duration (30 days in seconds)
     uint256 public constant MAX_DEADLINE_DURATION = 30 days;
+
+    /// @dev Minimum payment amount to prevent economically unviable transactions
+    uint256 public constant MIN_PAYMENT_AMOUNT = 1000; // Minimum 1000 units (0.001 with 6 decimals)
 
     /**
      * @notice Initialize PaymentSplitter with SunSwap V3 SwapRouter and WTRX
@@ -138,9 +142,17 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
 
         // Validate amounts
         require(intent.recipientAmount > 0 || intent.feeAmount > 0, "No amounts to transfer");
+        
+        // Prevent economically unviable transactions with very small amounts
+        if (intent.recipientAmount > 0) {
+            require(intent.recipientAmount >= MIN_PAYMENT_AMOUNT, "Recipient amount too small");
+        }
+        if (intent.feeAmount > 0) {
+            require(intent.feeAmount >= MIN_PAYMENT_AMOUNT, "Fee amount too small");
+        }
 
         // Validate token is a contract
-        require(intent.token.code.length > 0, "Token not a contract");
+        require(Address.isContract(intent.token), "Token not a contract");
     }
 
     /**
@@ -286,7 +298,8 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
             ITRC20 inputToken = ITRC20(tokenIn);
             require(inputToken.balanceOf(msg.sender) >= maxWillingToPay, "Insufficient balance");
             require(inputToken.allowance(msg.sender, address(this)) >= maxWillingToPay, "Insufficient allowance");
-            require(tokenIn.code.length > 0, "Input token not a contract");
+            // Validate tokenIn is a contract
+            require(Address.isContract(tokenIn), "Input token not a contract");
 
             // Pull input tokens from user
             inputToken.safeTransferFrom(msg.sender, address(this), maxWillingToPay);
