@@ -11,7 +11,8 @@ import "@cryptovarna/tron-contracts/contracts/utils/Context.sol";
 import "@cryptovarna/tron-contracts/contracts/security/Pausable.sol";
 import "./utils/Sweepable.sol";
 import "./interfaces/IPaymentSplitter.sol";
-import "./interfaces/ISwapRouter.sol";
+import "./interfaces/ISmartExchangeRouter.sol";
+import "./libraries/TransferHelper.sol";
 
 /**
  * @title PaymentSplitter
@@ -24,13 +25,14 @@ import "./interfaces/ISwapRouter.sol";
  * @notice Uses Sweepable to allow sweeping of stuck tokens by designated sweeper
  */
 contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable, Sweepable {
-    using SafeTRC20 for ITRC20;
+    // Note: Using TransferHelper instead of SafeTRC20 for TRON USDT compatibility
+    // TransferHelper has special handling for USDT which doesn't return standard boolean values
     using ECDSA for bytes32;
 
-    /// @dev SunSwap V3 SwapRouter for exact output swaps
-    ISwapRouter public immutable swapRouter;
+    /// @dev SmartExchangeRouter that supports multiple swap protocols (V1, V2, V3)
+    ISmartExchangeRouter public immutable swapRouter;
 
-    /// @dev Wrapped TRX (WTRX) contract address
+    /// @dev Wrapped TRX (WTRX) contract address - retrieved from the router
     address public immutable WTRX;
 
     /// @dev Represents native TRX
@@ -49,17 +51,15 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
     uint256 public constant MIN_PAYMENT_AMOUNT = 1000; // Minimum 1000 units (0.001 with 6 decimals)
 
     /**
-     * @notice Initialize PaymentSplitter with SunSwap V3 SwapRouter and WTRX
-     * @param _swapRouter SunSwap V3 SwapRouter address for this network
-     * @param _wtrx Wrapped TRX (WTRX) address for this network
-     * @dev Mainnet WTRX: TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR
-     * @dev Nile WTRX: Check SunSwap docs for testnet address
+     * @notice Initialize PaymentSplitter with SmartExchangeRouter
+     * @param _swapRouter SmartExchangeRouter address for this network
+     * @dev WTRX address is retrieved from the router automatically
      */
-    constructor(address _swapRouter, address _wtrx) {
+    constructor(address _swapRouter) {
         require(_swapRouter != address(0), "Invalid swap router");
-        require(_wtrx != address(0), "Invalid WTRX");
-        swapRouter = ISwapRouter(_swapRouter);
-        WTRX = _wtrx;
+        swapRouter = ISmartExchangeRouter(_swapRouter);
+        WTRX = ISmartExchangeRouter(_swapRouter).WTRX();
+        require(WTRX != address(0), "Invalid WTRX address from router");
     }
 
     /**
@@ -174,14 +174,14 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
         ITRC20 paymentToken = ITRC20(intent.token);
         address feeDestination = feeDestinations[intent.operator];
 
-        // Transfer to recipient (direct transfer - more gas efficient on TRON)
+        // Transfer to recipient using TransferHelper for USDT compatibility
         if (intent.recipientAmount > 0) {
-            paymentToken.safeTransferFrom(msg.sender, intent.recipient, intent.recipientAmount);
+            TransferHelper.safeTransferFrom(address(paymentToken), msg.sender, intent.recipient, intent.recipientAmount);
         }
 
         // Transfer fee to operator's destination
         if (intent.feeAmount > 0) {
-            paymentToken.safeTransferFrom(msg.sender, feeDestination, intent.feeAmount);
+            TransferHelper.safeTransferFrom(address(paymentToken), msg.sender, feeDestination, intent.feeAmount);
         }
 
         // Store values in local variables to avoid stack too deep error
@@ -235,16 +235,16 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
      * @notice Swap input token for exact output amount and split between recipient and operator
      * @param intent Payment intent (intent.token is output token, amounts are exact)
      * @param tokenIn Input token address (address(0) for native TRX)
-     * @param maxWillingToPay Maximum input tokens user will spend
-     * @param poolFee SunSwap V3 pool fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
-     * @dev Uses SunSwap V3 exactOutputSingle for guaranteed exact output amounts
-     * @dev Refunds unused input tokens to msg.sender
+     * @param exactAmountToPay Exact input tokens to spend (from quoter)
+     * @param fees Array of pool fees for each hop (for multi-hop swaps)
+     * @dev Uses SmartExchangeRouter for guaranteed exact output amounts across multiple protocols
+     * @dev User must provide exact quote from quoter - no slippage buffer needed
      */
     function swapAndSplitPayment(
         SplitPaymentIntent calldata intent,
         address tokenIn,
-        uint256 maxWillingToPay,
-        uint24 poolFee
+        uint256 exactAmountToPay,
+        uint24[] calldata fees  // Note: Changed from single poolFee to array for multi-hop support
     ) external payable nonReentrant whenNotPaused {
         // === VALIDATION PHASE ===
 
@@ -259,7 +259,7 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
 
         // === EFFECTS PHASE ===
 
-        // Mark as processed BEFORE external calls (Checks-Effects-Interactions)
+        // Mark as processed BEFORE any external calls (Checks-Effects-Interactions)
         processedPayments[intent.operator][intent.id] = true;
 
         // === INTERACTIONS PHASE ===
@@ -267,80 +267,112 @@ contract PaymentSplitter is IPaymentSplitter, ReentrancyGuard, Ownable, Pausable
         uint256 amountSpent;
 
         if (tokenIn == NATIVE_CURRENCY) {
-            // Native TRX swap
-            require(msg.value == maxWillingToPay, "Incorrect TRX amount");
+            // Native TRX swap - user sends exact amount from quoter
+            require(msg.value == exactAmountToPay, "Incorrect TRX amount");
+
+            // Prepare path for SmartExchangeRouter (reversed for exact output: [tokenOut, tokenIn])
+            address[] memory path = new address[](2);
+            path[0] = intent.token;  // Output token first for exactOutput
+            path[1] = WTRX;          // Input token is WTRX (TRX will be wrapped)
+
+            // Store parameters in local variables to avoid stack too deep error
+            address[] memory _path = path;
+            uint24[] memory _fees = fees;
+            uint256 _neededAmount = neededAmount;
+            uint256 _exactAmountToPay = exactAmountToPay;
+            address _recipient = address(this);
+            uint256 _deadline = intent.deadline;
 
             // Execute swap: TRX -> exact output token
-            // SwapRouter will automatically wrap TRX to WTRX internally
-            amountSpent = swapRouter.exactOutputSingle{value: maxWillingToPay}(
-                ISwapRouter.ExactOutputSingleParams({
-                    tokenIn: WTRX,  // Use WTRX, router auto-wraps the TRX
-                    tokenOut: intent.token,
-                    fee: poolFee,
-                    recipient: address(this),
-                    deadline: intent.deadline,
-                    amountOut: neededAmount,
-                    amountInMaximum: maxWillingToPay,
-                    sqrtPriceLimitX96: 0
-                })
+            amountSpent = swapRouter.swapExactOutput{
+                value: msg.value
+            }(
+                _path,
+                _fees,
+                _neededAmount,
+                _exactAmountToPay,
+                _recipient,
+                _deadline
             );
 
-            // Refund unused TRX to user
-            if (amountSpent < maxWillingToPay) {
-                uint256 refund = maxWillingToPay - amountSpent;
-                (bool success,) = payable(msg.sender).call{value: refund}("");
-                require(success, "TRX refund failed");
+            // Verify we used what we expected
+            require(amountSpent <= exactAmountToPay, "Amount exceeded maximum");
+
+            // Refund any unused TRX
+            if (amountSpent < exactAmountToPay) {
+                uint256 refund = exactAmountToPay - amountSpent;
+                (bool refundSuccess, ) = payable(msg.sender).call{value: refund}("");
+                require(refundSuccess, "TRX refund failed");
             }
         } else {
-            // TRC20 swap
+            // TRC20 swap - user sends exact amount from quoter
             require(msg.value == 0, "Don't send TRX for token swap");
 
             ITRC20 inputToken = ITRC20(tokenIn);
-            require(inputToken.balanceOf(msg.sender) >= maxWillingToPay, "Insufficient balance");
-            require(inputToken.allowance(msg.sender, address(this)) >= maxWillingToPay, "Insufficient allowance");
+            require(inputToken.balanceOf(msg.sender) >= exactAmountToPay, "Insufficient balance");
+            require(inputToken.allowance(msg.sender, address(this)) >= exactAmountToPay, "Insufficient allowance");
             // Validate tokenIn is a contract
             require(Address.isContract(tokenIn), "Input token not a contract");
 
-            // Pull input tokens from user
-            inputToken.safeTransferFrom(msg.sender, address(this), maxWillingToPay);
+            // Pull exact input tokens from user using TransferHelper
+            TransferHelper.safeTransferFrom(tokenIn, msg.sender, address(this), exactAmountToPay);
 
-            // Approve SwapRouter to spend input tokens
-            inputToken.safeApprove(address(swapRouter), maxWillingToPay);
+            // Approve SmartExchangeRouter to spend input tokens
+            TransferHelper.safeApprove(tokenIn, address(swapRouter), exactAmountToPay);
+
+            // Prepare path for SmartExchangeRouter (reversed for exact output: [tokenOut, tokenIn])
+            address[] memory path = new address[](2);
+            path[0] = intent.token;  // Output token first for exactOutput
+            path[1] = tokenIn;       // Input token
+
+            // Store parameters in local variables to avoid stack too deep error
+            address[] memory _path = path;
+            uint24[] memory _fees = fees;
+            uint256 _neededAmount = neededAmount;
+            uint256 _exactAmountToPay = exactAmountToPay;
+            address _recipient = address(this);
+            uint256 _deadline = intent.deadline;
 
             // Execute swap: tokenIn -> exact output token
-            amountSpent = swapRouter.exactOutputSingle(
-                ISwapRouter.ExactOutputSingleParams({
-                    tokenIn: tokenIn,
-                    tokenOut: intent.token,
-                    fee: poolFee,
-                    recipient: address(this),
-                    deadline: intent.deadline,
-                    amountOut: neededAmount,
-                    amountInMaximum: maxWillingToPay,
-                    sqrtPriceLimitX96: 0
-                })
+            amountSpent = swapRouter.swapExactOutput(
+                _path,
+                _fees,
+                _neededAmount,
+                _exactAmountToPay,
+                _recipient,
+                _deadline
             );
 
-            // Refund unused input tokens to user
-            if (amountSpent < maxWillingToPay) {
-                uint256 refund = maxWillingToPay - amountSpent;
-                inputToken.safeTransfer(msg.sender, refund);
+            // Verify we used what we expected
+            require(amountSpent <= exactAmountToPay, "Amount exceeded maximum");
+
+            // Refund unused input tokens to sender
+            if (amountSpent < exactAmountToPay) {
+                uint256 refund = exactAmountToPay - amountSpent;
+                TransferHelper.safeTransfer(tokenIn, msg.sender, refund);
             }
-            
+
             // Reset approval to zero for security
-            inputToken.safeApprove(address(swapRouter), 0);
+            TransferHelper.safeApprove(tokenIn, address(swapRouter), 0);
         }
 
         // Distribute output tokens to recipients
         ITRC20 outputToken = ITRC20(intent.token);
         address feeDestination = feeDestinations[intent.operator];
 
+        // Verify that the contract has sufficient balance to cover both transfers
+        uint256 outputBalance = outputToken.balanceOf(address(this));
+        uint256 totalAmount = intent.recipientAmount + intent.feeAmount;
+        require(outputBalance >= totalAmount, "Insufficient output token balance after swap");
+
+        // Use TransferHelper for TRON USDT compatibility
+        // TransferHelper has special handling for USDT which doesn't return standard boolean values
         if (intent.recipientAmount > 0) {
-            outputToken.safeTransfer(intent.recipient, intent.recipientAmount);
+            TransferHelper.safeTransfer(intent.token, intent.recipient, intent.recipientAmount);
         }
 
         if (intent.feeAmount > 0) {
-            outputToken.safeTransfer(feeDestination, intent.feeAmount);
+            TransferHelper.safeTransfer(intent.token, feeDestination, intent.feeAmount);
         }
 
         // Emit event with what user actually spent
