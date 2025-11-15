@@ -1,12 +1,10 @@
 /**
- * Complete End-to-End Workflow Example
+ * Swap TRX to USDT and Split Payment Example
  *
- * This example demonstrates the complete PaymentSplitter workflow:
- * 1. Register an operator
- * 2. Swap TRX to get exact USDT output
- * 3. Execute a swap and split payment
- * 4. Query payment status
- * 5. Verify balances
+ * This example demonstrates:
+ * 1. Get quote from SunSwap V3 Quoter for exact USDT output
+ * 2. Create signed payment intent
+ * 3. Execute swapAndSplitPayment (TRX → USDT → split to recipient + operator)
  */
 
 import {
@@ -22,11 +20,11 @@ import {
   PAYMENT_SPLITTER_ADDRESS
 } from './utils.js';
 
-// Network configuration
+// SunSwap V3 Quoter contract on Nile
 const QUOTER_ADDRESS = 'TUcM2gkpWEJxBpkweLdVoRp6DAUsw2vWR6';
 const WTRX_ADDRESS = 'TYsbWxNnyTgsZaTFaue9hqpxkU3Fkco94a';
 const USDT_ADDRESS = 'TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf';
-const NATIVE_TRX = '0x0000000000000000000000000000000000000000';
+const NATIVE_TRX = '0x0000000000000000000000000000000000000000'; // address(0) for native TRX
 
 // Quoter ABI
 const QUOTER_ABI = [{
@@ -57,60 +55,31 @@ async function main() {
     console.log('STEP 1: Setup Accounts and Contracts');
     console.log('-'.repeat(80));
 
-    // Initialize TronWeb for operator
+    // Initialize TronWeb instances
     const operatorTronWeb = initTronWeb(process.env.NILE_OPERATOR_PRIVATE_KEY);
     const operatorAddress = operatorTronWeb.defaultAddress.base58;
     console.log(`✓ Operator address: ${operatorAddress}`);
 
-    // Initialize TronWeb for payer
     const payerTronWeb = initTronWeb(process.env.SENDER_PRIVATE_KEY);
     const payerAddress = payerTronWeb.defaultAddress.base58;
     console.log(`✓ Payer address: ${payerAddress}`);
 
-    // Create a recipient address (for demo, we'll use operator as recipient)
-    const recipientAddress = operatorAddress;
+    const recipientAddress = operatorAddress; // For demo, operator is also recipient
     console.log(`✓ Recipient address: ${recipientAddress}`);
 
-    // Fee destination (where operator fees go)
     const feeDestination = operatorAddress;
     console.log(`✓ Fee destination: ${feeDestination}\n`);
 
     // Load contracts
     const splitter = await getPaymentSplitterContract(payerTronWeb);
     console.log(`✓ PaymentSplitter: ${PAYMENT_SPLITTER_ADDRESS}`);
-    console.log(`✓ USDT Token: ${USDT_ADDRESS}\n`);
 
     await sleep(2000);
 
     // ==========================================
-    // STEP 2: REGISTER OPERATOR
+    // STEP 2: CHECK BALANCES
     // ==========================================
-    console.log('STEP 2: Register Operator');
-    console.log('-'.repeat(80));
-
-    // Check if already registered
-    let isRegistered = await splitter.isOperatorRegistered(operatorAddress).call();
-
-    if (!isRegistered) {
-      console.log('Registering operator...');
-      // IMPORTANT: Load splitter with operatorTronWeb to register from operator account
-      const operatorSplitter = await getPaymentSplitterContract(operatorTronWeb);
-      const registerTx = await operatorSplitter.registerOperatorWithFeeDestination(feeDestination).send({
-        feeLimit: 100_000_000,
-        callValue: 0
-      });
-      await waitForTransaction(operatorTronWeb, registerTx);
-      console.log(`✓ Operator registered successfully\n`);
-    } else {
-      console.log('✓ Operator already registered\n');
-    }
-
-    await sleep(2000);
-
-    // ==========================================
-    // STEP 3: CHECK BALANCES
-    // ==========================================
-    console.log('STEP 3: Check Initial Balances');
+    console.log('\nSTEP 2: Check Initial Balances');
     console.log('-'.repeat(80));
 
     const initialTrxBalance = await payerTronWeb.trx.getBalance(payerAddress);
@@ -127,15 +96,15 @@ async function main() {
     await sleep(2000);
 
     // ==========================================
-    // STEP 4: GET SWAP QUOTE
+    // STEP 3: GET SWAP QUOTE
     // ==========================================
-    console.log('STEP 4: Get Swap Quote from SunSwap V3');
+    console.log('STEP 3: Get Swap Quote from SunSwap V3 Quoter');
     console.log('-'.repeat(80));
 
-    // Define exact USDT amounts we want - 10 USDT total
-    const recipientAmount = 9 * (10 ** Number(usdtDecimals));  // 9 USDT for recipient
-    const feeAmount = 1 * (10 ** Number(usdtDecimals));        // 1 USDT for operator fee
-    const totalUsdtNeeded = recipientAmount + feeAmount;       // 10 USDT total
+    // Define exact USDT amounts we want
+    const recipientAmount = 5 * (10 ** Number(usdtDecimals)); // 5 USDT for recipient
+    const feeAmount = 0.5 * (10 ** Number(usdtDecimals));     // 0.5 USDT for operator
+    const totalUsdtNeeded = recipientAmount + feeAmount;      // 5.5 USDT total
 
     console.log(`Recipient amount: ${recipientAmount / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`Operator fee: ${feeAmount / (10 ** Number(usdtDecimals))} USDT`);
@@ -160,7 +129,31 @@ async function main() {
       : quoteResult;
     const trxNeeded = Number(exactTrxNeeded);
 
-    console.log(`✓ Exact TRX needed: ${fromSun(trxNeeded)} TRX\n`);
+    console.log(`✓ Exact TRX needed: ${fromSun(trxNeeded)} TRX (from quoter)\n`);
+
+    await sleep(2000);
+
+    // ==========================================
+    // STEP 4: VERIFY OPERATOR IS REGISTERED
+    // ==========================================
+    console.log('STEP 4: Verify Operator Registration');
+    console.log('-'.repeat(80));
+
+    const isRegistered = await splitter.isOperatorRegistered(operatorAddress).call();
+    console.log(`Operator registered: ${isRegistered ? '✓ Yes' : '✗ No'}`);
+
+    if (!isRegistered) {
+      console.log('\nRegistering operator...');
+      const operatorSplitter = await getPaymentSplitterContract(operatorTronWeb);
+      const registerTx = await operatorSplitter.registerOperatorWithFeeDestination(feeDestination).send({
+        feeLimit: 100_000_000,
+        callValue: 0
+      });
+      await waitForTransaction(operatorTronWeb, registerTx);
+      console.log('✓ Operator registered successfully\n');
+    } else {
+      console.log('✓ Operator already registered\n');
+    }
 
     await sleep(2000);
 
@@ -176,7 +169,7 @@ async function main() {
 
     console.log(`Payment ID: ${paymentId}`);
     console.log(`Recipient: ${recipientAddress}`);
-    console.log(`Token (output): USDT`);
+    console.log(`Token (output): ${USDT_ADDRESS}`);
     console.log(`Recipient Amount: ${recipientAmount / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`Fee Amount: ${feeAmount / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`Deadline: ${new Date(deadline * 1000).toISOString()}`);
@@ -185,7 +178,7 @@ async function main() {
       recipientAmount: recipientAmount.toString(),
       deadline,
       recipient: recipientAddress,
-      tokenAddress: USDT_ADDRESS,  // Output token is USDT
+      tokenAddress: USDT_ADDRESS, // Output token
       refundDestination: payerAddress,
       feeAmount: feeAmount.toString(),
       id: paymentId,
@@ -206,7 +199,7 @@ async function main() {
 
     const intentArray = [
       recipientAddress,
-      USDT_ADDRESS,                // Output token (USDT)
+      USDT_ADDRESS,                    // Output token
       recipientAmount.toString(),
       operatorAddress,
       feeAmount.toString(),
@@ -225,12 +218,12 @@ async function main() {
     console.log('\nExecuting swapAndSplitPayment...');
     const swapTx = await splitter.swapAndSplitPayment(
       intentArray,
-      NATIVE_TRX,                 // tokenIn = address(0) for native TRX
-      trxNeeded.toString(),       // exactAmountToPay from quoter
-      [poolFee]                   // Fees array: 1 fee for 2-token swap
+      NATIVE_TRX,          // tokenIn = address(0) for native TRX
+      trxNeeded.toString(), // exactAmountToPay from quoter
+      poolFee
     ).send({
-      feeLimit: toSun(150),       // Fee limit capped at 150 TRX
-      callValue: trxNeeded,       // Send exact TRX amount
+      feeLimit: toSun(1000),
+      callValue: trxNeeded, // Send exact TRX amount
       shouldPollResponse: true
     });
 
@@ -239,33 +232,24 @@ async function main() {
     console.log(`  Transaction: ${swapTx}`);
     console.log(`  View on NileScan: https://nile.tronscan.org/#/transaction/${swapTx}\n`);
 
-    await sleep(2000);
+    await sleep(3000);
 
     // ==========================================
-    // STEP 7: VERIFY PAYMENT
+    // STEP 7: VERIFY RESULTS
     // ==========================================
-    console.log('STEP 7: Verify Payment Status');
+    console.log('STEP 7: Verify Results');
     console.log('-'.repeat(80));
 
+    // Check payment is processed
     const isProcessed = await splitter.isPaymentProcessed(operatorAddress, paymentId).call();
     console.log(`Payment processed: ${isProcessed ? '✓ Yes' : '✗ No'}`);
 
-    if (isProcessed) {
-      console.log(`✓ Payment ID ${paymentId} has been successfully processed\n`);
-    }
-
-    await sleep(2000);
-
-    // ==========================================
-    // STEP 8: CHECK FINAL BALANCES
-    // ==========================================
-    console.log('STEP 8: Check Final Balances');
-    console.log('-'.repeat(80));
-
+    // Check final balances
     const finalTrxBalance = await payerTronWeb.trx.getBalance(payerAddress);
     const finalPayerUsdtBalance = await usdtContract.balanceOf(payerAddress).call();
     const finalRecipientUsdtBalance = await usdtContract.balanceOf(recipientAddress).call();
 
+    console.log('\nFinal Balances:');
     console.log(`Payer TRX: ${fromSun(initialTrxBalance)} → ${fromSun(finalTrxBalance)} TRX`);
     console.log(`Payer USDT: ${Number(payerUsdtBalance) / (10 ** Number(usdtDecimals))} → ${Number(finalPayerUsdtBalance) / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`Recipient USDT: ${Number(recipientUsdtBalance) / (10 ** Number(usdtDecimals))} → ${Number(finalRecipientUsdtBalance) / (10 ** Number(usdtDecimals))} USDT`);
@@ -275,21 +259,24 @@ async function main() {
     const usdtReceived = (Number(finalRecipientUsdtBalance) - Number(recipientUsdtBalance)) / (10 ** Number(usdtDecimals));
 
     console.log('\nSwap Summary:');
-    console.log(`  TRX spent: ~${trxSpent.toFixed(2)} TRX`);
-    console.log(`  USDT received: ${usdtReceived.toFixed(2)} USDT`);
-    if (usdtReceived > 0) {
-      console.log(`  Effective price: ${(trxSpent / usdtReceived).toFixed(6)} TRX per USDT`);
-    }
-    console.log();
+    console.log(`  TRX spent: ${trxSpent.toFixed(6)} TRX`);
+    console.log(`  USDT received: ${usdtReceived.toFixed(6)} USDT`);
+    console.log(`  Effective price: ${(trxSpent / usdtReceived).toFixed(6)} TRX per USDT`);
+
+    // Get transaction info
+    const txInfo = await payerTronWeb.trx.getTransactionInfo(swapTx);
+    console.log('\nGas Usage:');
+    console.log(`  Energy used: ${txInfo.receipt.energy_usage_total || 0}`);
+    console.log(`  Net used: ${txInfo.receipt.net_usage || 0}`);
 
     // ==========================================
     // SUMMARY
     // ==========================================
-    console.log('='.repeat(80));
-    console.log('SWAP AND SPLIT COMPLETED SUCCESSFULLY');
+    console.log('\n' + '='.repeat(80));
+    console.log('SWAP COMPLETED SUCCESSFULLY');
     console.log('='.repeat(80));
     console.log('\nSummary:');
-    console.log(`  • Swapped: ~${trxSpent.toFixed(2)} TRX → ${totalUsdtNeeded / (10 ** Number(usdtDecimals))} USDT`);
+    console.log(`  • Swapped: ${trxSpent.toFixed(6)} TRX → ${usdtReceived.toFixed(6)} USDT`);
     console.log(`  • Recipient received: ${recipientAmount / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`  • Operator fee: ${feeAmount / (10 ** Number(usdtDecimals))} USDT`);
     console.log(`  • Payment ID: ${paymentId}`);
@@ -301,6 +288,9 @@ async function main() {
     console.error(error.message);
     if (error.transaction) {
       console.error('Transaction:', error.transaction);
+    }
+    if (error.error) {
+      console.error('Error details:', error.error);
     }
     process.exit(1);
   }

@@ -8,8 +8,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '.env') });
 
 // Contract addresses from .env
-const PAYMENT_SPLITTER_ADDRESS = process.env.PAYMENT_SPLITTER_SHASTA_ADDRESS;
-const MOCK_TOKEN_ADDRESS = process.env.TEST_TOKEN_ADDRESS;
+const PAYMENT_SPLITTER_ADDRESS = process.env.CONTRACT_ADDRESS;
+const MOCK_TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
 
 async function debugSignature() {
   console.log('='.repeat(80));
@@ -18,7 +18,7 @@ async function debugSignature() {
   console.log();
 
   const tronWeb = initTronWeb();
-  const operator_private_key = process.env.OPERATOR_PRIVATE_KEY;
+  const operator_private_key = process.env.NILE_OPERATOR_PRIVATE_KEY;
   const sender_private_key = process.env.SENDER_PRIVATE_KEY;
 
   const operatorAccount = tronWeb.address.fromPrivateKey(operator_private_key);

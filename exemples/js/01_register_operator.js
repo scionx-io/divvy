@@ -21,7 +21,8 @@ async function main() {
 
     // Initialize TronWeb (using default account from .env)
     const tronWeb = initTronWeb();
-    console.log('Connected to Shasta testnet');
+    const network = process.env.TRON_NETWORK || 'shasta';
+    console.log(`Connected to ${network} testnet`);
     console.log(`Operator address: ${tronWeb.defaultAddress.base58}\n`);
 
     // Load PaymentSplitter contract

@@ -56,3 +56,6 @@ sunswap-v3-contracts/
 smart-exchange-router/
 CLAUDE.md
 QWEN.md
+/scripts
+scripts/verify-shasta-contract.js
+/test

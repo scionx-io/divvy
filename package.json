@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "main": "index.js",
   "license": "MIT",
+  "scripts": {
+    "deploy:nile": "tronbox migrate --network nile",
+    "deploy:shasta": "tronbox migrate --network shasta",
+    "deploy:mainnet": "tronbox migrate --network mainnet",
+    "compile": "tronbox compile",
+    "test": "tronbox test"
+  },
   "dependencies": {
     "@cryptovarna/tron-contracts": "^0.4.5",
     "bn.js": "^5.2.2",
     "dotenv": "^16.0.0",
+    "ethereumjs-abi": "^0.6.8",
+    "ethereumjs-util": "^7.1.5",
     "tronweb": "^6.0.4"
   },
   "devDependencies": {

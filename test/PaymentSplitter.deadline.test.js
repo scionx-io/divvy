@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { expect, assert } = require('chai');
 const {
   expectRevert,

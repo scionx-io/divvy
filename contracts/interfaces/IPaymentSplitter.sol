@@ -112,12 +112,12 @@ interface IPaymentSplitter {
     /// @notice Swap input token via SunSwap V3 and split output between recipient and operator
     /// @param intent Payment intent specifying output token and exact amounts
     /// @param tokenIn Input token address (address(0) for native TRX)
-    /// @param maxWillingToPay Maximum amount of input token user will spend
-    /// @param poolFee SunSwap V3 pool fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
+    /// @param exactAmountToPay Exact input tokens to spend (from quoter)
+    /// @param fees Array of pool fees for each hop (for multi-hop swaps)
     function swapAndSplitPayment(
         SplitPaymentIntent calldata intent,
         address tokenIn,
-        uint256 maxWillingToPay,
-        uint24 poolFee
+        uint256 exactAmountToPay,
+        uint24[] calldata fees
     ) external payable;
 }

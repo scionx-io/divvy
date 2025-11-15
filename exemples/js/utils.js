@@ -16,8 +16,8 @@ const __dirname = dirname(__filename);
 dotenv.config({ path: join(__dirname, '.env') });
 
 // Contract addresses from .env
-export const PAYMENT_SPLITTER_ADDRESS = process.env.PAYMENT_SPLITTER_SHASTA_ADDRESS || 'TU5kasmGMFTGZTS9cYvyX5WvYDAQoKdsKj';
-export const MOCK_TOKEN_ADDRESS = process.env.TEST_TOKEN_ADDRESS || 'TFz4HPavWtb6LtEkpESUnMQ61JAN7HHexj';
+export const PAYMENT_SPLITTER_ADDRESS = process.env.CONTRACT_ADDRESS ;
+export const MOCK_TOKEN_ADDRESS = process.env.TOKEN_ADDRESS ;
 
 /**
  * Initialize TronWeb instance for Shasta testnet
@@ -29,6 +29,8 @@ export function initTronWeb(privateKey = null) {
   
   if (network === 'testing' || network === 'development') {
     fullHost = process.env.TESTING_NETWORK_URL || 'http://127.0.0.1:9090';
+  } else if (network === 'nile') {
+    fullHost = 'https://nile.trongrid.io';
   } else {
     fullHost = 'https://api.shasta.trongrid.io';
   }
@@ -44,6 +46,11 @@ export function initTronWeb(privateKey = null) {
     return new TronWeb({
       fullHost,
       privateKey: process.env.PRIVATE_KEY_DEV || '0000000000000000000000000000000000000000000000000000000000000001'
+    });
+  } else if (network === 'nile') {
+    return new TronWeb({
+      fullHost,
+      privateKey: process.env.PRIVATE_KEY_NILE
     });
   } else {
     return new TronWeb({
@@ -176,19 +183,40 @@ export async function waitForTransaction(tronWeb, txHash) {
 
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
-    const txInfo = await tronWeb.trx.getTransaction(txHash);
 
-    if (txInfo && txInfo.ret && txInfo.ret[0]) {
-      if (txInfo.ret[0].contractRet === 'SUCCESS') {
-        console.log('✓ Transaction confirmed');
-        return txInfo;
-      } else if (txInfo.ret[0].contractRet === 'REVERT') {
-        throw new Error('Transaction reverted');
+    try {
+      // Use getTransactionInfo to get the actual execution receipt
+      const txInfo = await tronWeb.trx.getTransactionInfo(txHash);
+
+      if (txInfo && txInfo.id) {
+        // Transaction has been confirmed and executed
+        if (txInfo.receipt) {
+          if (txInfo.receipt.result === 'SUCCESS') {
+            console.log('✓ Transaction confirmed');
+            return txInfo;
+          } else if (txInfo.receipt.result === 'REVERT') {
+            // Get revert reason if available
+            const revertReason = txInfo.contractResult && txInfo.contractResult[0]
+              ? tronWeb.toUtf8(txInfo.contractResult[0])
+              : 'Unknown reason';
+            throw new Error(`Transaction reverted: ${revertReason}`);
+          } else if (txInfo.receipt.result === 'OUT_OF_ENERGY') {
+            throw new Error('Transaction failed: Out of energy');
+          } else {
+            throw new Error(`Transaction failed: ${txInfo.receipt.result}`);
+          }
+        }
       }
+    } catch (error) {
+      // If error is thrown above, re-throw it
+      if (error.message.includes('Transaction')) {
+        throw error;
+      }
+      // Otherwise, transaction not found yet, continue waiting
     }
   }
 
-  throw new Error('Transaction timeout');
+  throw new Error('Transaction timeout - transaction not confirmed after 60 seconds');
 }
 
 /**
