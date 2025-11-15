@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 module.exports = {
   networks: {
     mainnet: {
@@ -17,14 +19,14 @@ module.exports = {
     nile: {
       privateKey: process.env.PRIVATE_KEY_NILE,
       userFeePercentage: 100,
-      feeLimit: 200 * 1e6,
+      feeLimit: 5000 * 1e6,  // Increased to 5000 TRX for large contract deployment
       fullHost: 'https://nile.trongrid.io',
       network_id: '3'
     },
     development: {
       privateKey: process.env.PRIVATE_KEY_DEV || '0000000000000000000000000000000000000000000000000000000000000001',
       userFeePercentage: 0,
-      feeLimit: 200 * 1e6,
+      feeLimit: 1000 * 1e6,  // Increased to 1000 TRX for large contracts
       fullHost: 'http://127.0.0.1:9090',
       network_id: '9'
     },
@@ -32,7 +34,7 @@ module.exports = {
     testing: {
       privateKey: process.env.PRIVATE_KEY_DEV || '0000000000000000000000000000000000000000000000000000000000000001',
       userFeePercentage: 0,
-      feeLimit: 200 * 1e6,
+      feeLimit: 1000 * 1e6,  // Increased to 1000 TRX for large contracts
       fullHost: 'http://127.0.0.1:9090',
       network_id: '9'
     }

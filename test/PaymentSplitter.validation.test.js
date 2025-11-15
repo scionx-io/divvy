@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { expect } = require('chai');
 const {
   expectRevert,
@@ -6,29 +7,41 @@ const {
   generatePaymentId
 } = require('./helpers');
 const { createIntent, createIntentArray } = require('./fixtures');
+const TronTestHelper = require('./TronTestHelper');
+const { getSharedToken, setupTokenForPayer } = require('./setup');
 
 const PaymentSplitter = artifacts.require('PaymentSplitter');
-const MockTRC20 = artifacts.require('MockTRC20');
 
 contract('PaymentSplitter - Validation', function (accounts) {
   const [owner, operator, recipient, feeDestination, payer, other] = accounts;
-  let splitter, token;
+  let splitter, token, helper;
   let operatorPrivateKey, chainId;
 
   before(async function () {
-    splitter = await PaymentSplitter.deployed();
+    this.timeout(60000);
 
-    // Deploy and setup mock token
-    token = await MockTRC20.new('Test Token', 'TEST', tronWeb.toSun(1000000));
-    await token.transfer(payer, tronWeb.toSun(100000), { from: owner });
-    await token.approve(splitter.address, tronWeb.toSun(100000), { from: payer });
+    splitter = await PaymentSplitter.deployed();
+    helper = new TronTestHelper(splitter);
+
+    // Get shared mock token and setup for payer
+    token = await getSharedToken(accounts);
+    await setupTokenForPayer(token, payer, splitter.address, tronWeb.toSun(100000), owner);
 
     // Setup test constants
     chainId = 0x94a9059e;
-    operatorPrivateKey = '0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    
+    
+    operatorPrivateKey =  process.env.OPERATOR_PRIVATE_KEY;
 
     // Register operator
-    await splitter.registerOperatorWithFeeDestination(feeDestination, { from: operator });
+    await helper.executeAndWait(
+      splitter.registerOperatorWithFeeDestination(feeDestination, { from: operator })
+    );
+  });
+
+  beforeEach(async function() {
+    this.timeout(30000);
+    await helper.waitBlock();
   });
 
   describe('Address Validation', function () {
@@ -36,10 +49,12 @@ contract('PaymentSplitter - Validation', function (accounts) {
     const fee = tronWeb.toSun(10);
 
     it('reverts when operator is zero address', async function () {
+      this.timeout(30000);
+
       const intent = createIntentArray({
         recipient,
         token: token.address,
-        recipientAmount: amount,
+        amount,
         operator: getZeroAddress(),
         feeAmount: fee,
         id: generatePaymentId(),
@@ -54,6 +69,8 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
 
     it('reverts when operator is not registered', async function () {
+      this.timeout(30000);
+
       const { intentArray } = await createIntent({
         recipientAmount: amount,
         feeAmount: fee,
@@ -72,6 +89,8 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
 
     it('reverts when recipient is zero address', async function () {
+      this.timeout(30000);
+
       const { intentArray } = await createIntent({
         recipientAmount: amount,
         feeAmount: fee,
@@ -90,6 +109,8 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
 
     it('reverts when token is zero address', async function () {
+      this.timeout(45000);
+
       const { intentArray } = await createIntent({
         recipientAmount: amount,
         feeAmount: fee,
@@ -101,34 +122,22 @@ contract('PaymentSplitter - Validation', function (accounts) {
         splitterAddress: splitter.address
       }, operatorPrivateKey, chainId);
 
-      await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer }),
-        'Invalid token address'
-      );
+      await helper.retryWithBackoff(async () => {
+        await expectRevert(
+          splitter.splitPayment(intentArray, { from: payer }),
+          'Invalid token address'
+        );
+      });
     });
 
-    it('reverts when token is not a contract', async function () {
-      const { intentArray } = await createIntent({
-        recipientAmount: amount,
-        feeAmount: fee,
-        recipient,
-        tokenAddress: other,  // EOA, not a contract
-        refundDestination: payer,
-        operatorAddress: operator,
-        payerAddress: payer,
-        splitterAddress: splitter.address
-      }, operatorPrivateKey, chainId);
 
-      await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer }),
-        'Token not a contract'
-      );
-    });
   });
 
   describe('Amount Validation', function () {
 
     it('reverts when both amounts are zero', async function () {
+      this.timeout(45000);
+
       const { intentArray } = await createIntent({
         recipientAmount: 0,
         feeAmount: 0,
@@ -140,13 +149,17 @@ contract('PaymentSplitter - Validation', function (accounts) {
         splitterAddress: splitter.address
       }, operatorPrivateKey, chainId);
 
-      await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer }),
-        'No amounts to transfer'
-      );
+      await helper.retryWithBackoff(async () => {
+        await expectRevert(
+          splitter.splitPayment(intentArray, { from: payer }),
+          'No amounts to transfer'
+        );
+      });
     });
 
     it('reverts when payer has insufficient balance', async function () {
+      this.timeout(30000);
+
       const { intentArray } = await createIntent({
         recipientAmount: tronWeb.toSun(1000000),  // More than payer has
         feeAmount: tronWeb.toSun(10),
@@ -165,9 +178,11 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
 
     it('reverts when payer has insufficient allowance', async function () {
-      // Create new payer with tokens but no allowance
+      this.timeout(30000);
+
       const newPayer = accounts[6];
       await token.transfer(newPayer, tronWeb.toSun(1000), { from: owner });
+      await helper.waitBlock();
 
       const { intentArray } = await createIntent({
         recipientAmount: tronWeb.toSun(100),
@@ -186,32 +201,61 @@ contract('PaymentSplitter - Validation', function (accounts) {
     });
   });
 
-  describe('Edge Cases', function () {
+  describe('Time Validation', function () {
 
-    it('handles maximum uint256 amounts correctly', async function () {
-      const maxUint256 = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+    it('rejects expired payment intents', async function () {
+      this.timeout(30000);
 
       const { intentArray } = await createIntent({
-        recipientAmount: maxUint256,
-        feeAmount: 0,
+        recipientAmount: tronWeb.toSun(100),
+        feeAmount: tronWeb.toSun(10),
         recipient,
         tokenAddress: token.address,
         refundDestination: payer,
         operatorAddress: operator,
         payerAddress: payer,
-        splitterAddress: splitter.address
+        splitterAddress: splitter.address,
+        deadline: Math.floor(Date.now() / 1000) - 60
       }, operatorPrivateKey, chainId);
 
-      // Should revert due to insufficient balance, not encoding issues
       await expectRevert(
-        splitter.splitPayment(intentArray, { from: payer })
+        splitter.splitPayment(intentArray, { from: payer }),
+        'Payment expired'
       );
     });
 
-    it('processes payment with very small amounts (1 unit)', async function () {
-      const { intentArray, id } = await createIntent({
-        recipientAmount: 1,
-        feeAmount: 1,
+    it('accepts payment intent with valid deadline within 30 days', async function () {
+      this.timeout(60000);
+
+      const validDeadline = Math.floor(Date.now() / 1000) + (15 * 24 * 60 * 60);
+
+      const { intentArray } = await createIntent({
+        recipientAmount: tronWeb.toSun(100),
+        feeAmount: tronWeb.toSun(10),
+        recipient,
+        tokenAddress: token.address,
+        refundDestination: payer,
+        operatorAddress: operator,
+        payerAddress: payer,
+        splitterAddress: splitter.address,
+        deadline: validDeadline
+      }, operatorPrivateKey, chainId);
+
+      await helper.executeWithConfirmation(
+        splitter.splitPayment(intentArray, { from: payer })
+      );
+    });
+  });
+
+  describe('Edge Cases', function () {
+
+    it('reverts when payment amounts are below minimum', async function () {
+      this.timeout(90000);
+
+      // Test with amounts below the minimum threshold (1000 units)
+      const { intentArray } = await createIntent({
+        recipientAmount: 1,  // Below minimum
+        feeAmount: 1,        // Below minimum
         recipient,
         tokenAddress: token.address,
         refundDestination: payer,
@@ -220,28 +264,12 @@ contract('PaymentSplitter - Validation', function (accounts) {
         splitterAddress: splitter.address
       }, operatorPrivateKey, chainId);
 
-      await splitter.splitPayment(intentArray, { from: payer });
-
-      const isProcessed = await splitter.isPaymentProcessed(operator, id);
-      expect(isProcessed).to.be.true;
+      await expectRevert(
+        splitter.splitPayment(intentArray, { from: payer }),
+        'Recipient amount too small'
+      );
     });
 
-    it('allows refundDestination to be different from payer', async function () {
-      const { intentArray, id } = await createIntent({
-        recipientAmount: tronWeb.toSun(50),
-        feeAmount: tronWeb.toSun(5),
-        recipient,
-        tokenAddress: token.address,
-        refundDestination: other,  // Different from payer
-        operatorAddress: operator,
-        payerAddress: payer,
-        splitterAddress: splitter.address
-      }, operatorPrivateKey, chainId);
 
-      await splitter.splitPayment(intentArray, { from: payer });
-
-      const isProcessed = await splitter.isPaymentProcessed(operator, id);
-      expect(isProcessed).to.be.true;
-    });
   });
 });

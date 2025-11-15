@@ -42,6 +42,30 @@ interface IPaymentSplitter {
         uint256 feeAmount,
         address token
     );
+
+    /// @notice Emitted when a swap payment is successfully processed
+    /// @param operator Operator who signed the payment intent
+    /// @param id Unique payment identifier
+    /// @param recipient Address receiving the payment
+    /// @param sender Address who initiated the payment
+    /// @param spentAmount Amount of input token actually spent by user
+    /// @param spentCurrency Address of input token spent (address(0) for TRX)
+    event SwapPaymentProcessed(
+        address indexed operator,
+        bytes16 indexed id,
+        address indexed recipient,
+        address sender,
+        uint256 spentAmount,
+        address spentCurrency
+    );
+
+    /// @notice Thrown when tokenIn equals intent.token (no swap needed)
+    error NoSwapNeeded();
+
+    /// @notice Thrown when Smart Router swap fails
+    /// @param reason The error reason from the router
+    error SwapFailed(string reason);
+
     /**
      * @notice Register operator with custom fee destination
      * @param _feeDestination Address where fees will be sent (cannot be zero address)
@@ -84,4 +108,16 @@ interface IPaymentSplitter {
      * @return True if operator is registered
      */
     function isOperatorRegistered(address operator) external view returns (bool);
+
+    /// @notice Swap input token via SunSwap V3 and split output between recipient and operator
+    /// @param intent Payment intent specifying output token and exact amounts
+    /// @param tokenIn Input token address (address(0) for native TRX)
+    /// @param exactAmountToPay Exact input tokens to spend (from quoter)
+    /// @param fees Array of pool fees for each hop (for multi-hop swaps)
+    function swapAndSplitPayment(
+        SplitPaymentIntent calldata intent,
+        address tokenIn,
+        uint256 exactAmountToPay,
+        uint24[] calldata fees
+    ) external payable;
 }

@@ -8,8 +8,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, '.env') });
 
 // Contract addresses from .env
-const PAYMENT_SPLITTER_ADDRESS = process.env.PAYMENT_SPLITTER_SHASTA_ADDRESS;
-const MOCK_TOKEN_ADDRESS = process.env.TEST_TOKEN_ADDRESS;
+const PAYMENT_SPLITTER_ADDRESS = process.env.CONTRACT_ADDRESS;
+const MOCK_TOKEN_ADDRESS = process.env.TOKEN_ADDRESS;
 
 async function debugSignature() {
   console.log('='.repeat(80));
@@ -18,7 +18,7 @@ async function debugSignature() {
   console.log();
 
   const tronWeb = initTronWeb();
-  const operator_private_key = process.env.OPERATOR_PRIVATE_KEY;
+  const operator_private_key = process.env.NILE_OPERATOR_PRIVATE_KEY;
   const sender_private_key = process.env.SENDER_PRIVATE_KEY;
 
   const operatorAccount = tronWeb.address.fromPrivateKey(operator_private_key);
@@ -60,6 +60,42 @@ async function debugSignature() {
   console.log(`  Splitter: ${splitterHex}`);
   console.log();
 
+  // Get chain ID dynamically
+  let chainId;
+  if (process.env.NILE_CHAIN_ID) {
+    // Use environment variable if available
+    chainId = process.env.NILE_CHAIN_ID;
+  } else {
+    // Attempt to retrieve from network
+    const chainParameters = await tronWeb.trx.getChainParameters();
+    console.log('Available chain parameters:', chainParameters);
+
+    // Try different possible parameter names for chain ID
+    const chainIdParam = chainParameters.find(param =>
+      param.key === 'chain.id' ||
+      param.key === 'id' ||
+      param.key === 'chainID'
+    );
+
+    if (chainIdParam) {
+      chainId = '0x' + parseInt(chainIdParam.value).toString(16);
+    } else {
+      // Fallback to getting from node info
+      const nodeInfo = await tronWeb.trx.getNodeInfo();
+      console.log('Node info:', nodeInfo);
+      // Extract chain ID from node info (this is an alternative method)
+      chainId = nodeInfo.code ? '0x' + parseInt(nodeInfo.code).toString(16) : '0x94a9059e'; // Default to Shasta
+    }
+  }
+
+  // Ensure chainId is in the appropriate format (hex number)
+  chainId = typeof chainId === 'string' && chainId.startsWith('0x')
+    ? chainId
+    : '0x' + parseInt(chainId || '0x94a9059e').toString(16);
+
+  console.log(`Using chain ID: ${chainId}`);
+  console.log();
+
   // Pack parameters
   const types = [
     'uint256', 'uint256', 'address', 'address', 'address',
@@ -75,7 +111,7 @@ async function debugSignature() {
     feeAmount,
     paymentId,
     operatorHex,
-    0x94a9059e, // Shasta chain ID
+    chainId, // Dynamic chain ID
     payerHex,
     splitterHex
   ];
@@ -112,7 +148,7 @@ async function debugSignature() {
 
   const v = signature.v >= 27 ? signature.v : signature.v + 27;
   const finalSignature = signature.r + signature.s.slice(2) + v.toString(16).padStart(2, '0');
-  console.log(`Final Signature: 0x${finalSignature}`);
+  console.log(`Final Signature: ${finalSignature}`);
   console.log();
 
   console.log('='.repeat(80));
