@@ -1,67 +1,177 @@
-# Divvy - PaymentSplitter for TRON
+# **Divvy Protocol**
 
-A smart contract system for splitting TRC20 token payments between recipients and operators with fee management on the TRON blockchain.
+Divvy is a lightweight on-chain payment coordinator built for the Tron network. It provides a simple, reliable way to distribute payments between a main recipient and an operator, ensuring predictable settlement and verifiable processing.
 
-## New: Universal Router Integration
+---
 
-This version introduces a new `PaymentSplitterWithUniversalRouter` contract that leverages a Universal Router for atomic execution of swaps and transfers, following the Uniswap Universal Router pattern.
+## **What Divvy Does**
 
-### Key Features of the Universal Router Implementation
+* Sends the exact amount specified to the intended recipient
+* Routes an operator fee in the same transaction
+* Prevents the same payment from being processed more than once
+* Ensures the entire transfer succeeds together or fails together
+* Keeps the protocol open—anyone can act as an operator
 
-1. **Atomic Execution**: All operations (swap, transfers, refunds) happen atomically in a single transaction
-2. **Command-Based Operations**: Uses a command pattern similar to Uniswap's Universal Router:
-   - `V3_SWAP_EXACT_OUT` (0x00): Performs the token swap with exact output
-   - `TRANSFER` (0x01): Distributes tokens to recipients and fee destinations
-   - `SWEEP` (0x02): Returns unused input tokens to the payer
-3. **Direct Distribution**: Output tokens go directly to intended recipients without intermediate holding
-4. **Gas Efficiency**: Minimized number of external calls through batched operations
+---
 
-### How It Works
+## **Deployments**
 
-The Universal Router pattern executes the following sequence atomically:
+| Network | Environment    | Address |
+| ------- | -------------- | ------- |
+| Tron    | Mainnet        | `TBD`   |
+| Tron    | Nile Testnet   | `TBHRkgDhbraCfYkuaRTmVzhiVakcjEPTtj` |
+| Tron    | Shasta Testnet | `TBD`   |
 
-1. **V3_SWAP_EXACT_OUT**: Swaps input tokens for exact output amounts, with output going to the router
-2. **TRANSFER**: Distributes output tokens to recipient
-3. **TRANSFER**: Distributes output tokens to fee destination
-4. **SWEEP**: Returns any unused input tokens back to the payer
+---
 
-This eliminates the need for intermediate holding contracts and provides better security and efficiency.
+## **Examples**
 
-## Quick Start
+Complete examples demonstrating Divvy protocol usage are available in both JavaScript and Ruby:
 
-### Scripts
+### JavaScript Examples
 
-- **Deployment**: `scripts/deploy-shasta.js`, `scripts/deploy-mainnet.js`
-- **Testing**: `scripts/verify-shasta-contract.js`, `scripts/test-shasta-usdt.js`
-- **New Feature**: `scripts/deploy-nile.js` for deploying minimal TRX to USDT swap contract
+Located in the `examples/js/` directory, these examples demonstrate complete workflows:
 
-### Setup
+- `complete_workflow.js` - Complete end-to-end workflow including registration, payment execution, and verification
+- `swap_trx_to_usdt.js` - Swap TRX to USDT and split payment in a single transaction
+- Other step-by-step examples for individual operations
 
-```bash
-# Create .env file with your private key
-cp .env.example .env  # Add your private key securely
-
-# Deploy to Shasta testnet
-node scripts/deploy-shasta.js
-```
-
-## New Feature: Minimal TRX to USDT Swap Contract
-
-The repository now includes `MinimalTRXToUSDTSwap.sol`, a minimal contract that swaps TRX to USDT via SunSwap V3's exactOutputSingle function. This contract allows for simple TRX to USDT swaps with a straightforward interface.
-
-### Deploying the Minimal Swap Contract to Nile Testnet
-
-To deploy the MinimalTRXToUSDTSwap contract to the Nile testnet:
-
-1. Ensure you have a private key for the Nile testnet in your `.env` file as `PRIVATE_KEY_NILE`
-2. Update the contract addresses in the migration file with actual Nile testnet addresses
-3. Run:
+To run the JavaScript examples:
 
 ```bash
-tronbox migrate --network nile
+cd examples/js
+npm install
+# Copy and update .env file with your private keys
+cp .env.example .env
+node complete_workflow.js
 ```
 
-## Security
+### Ruby Examples
 
-⚠️ **Important**: Never commit private keys or sensitive credentials. Use environment variables.
+Located in the `examples/ruby/` directory:
+
+- `complete_workflow.rb` - Complete end-to-end workflow in Ruby
+
+To run the Ruby examples:
+
+```bash
+cd examples/ruby
+bundle install
+# Copy and update .env file with your private keys
+cp .env.example .env
+bundle exec ruby ruby/complete_workflow.rb
+```
+
+---
+
+## **How It Works**
+
+### **Integration**
+
+Divvy supports integration in multiple languages:
+
+#### Ruby + tron.rb
+
+Divvy can be used with Ruby through the tron.rb gem.
+
+Required endpoints:
+
+- /wallet/triggersmartcontract for write operations
+- /wallet/triggerconstantcontract for read operations
+
+#### JavaScript + TronWeb
+
+Divvy can also be integrated using JavaScript with TronWeb library.
+
+Required endpoints:
+
+- tronWeb.transaction.triggerSmartContract() for write operations
+- tronWeb.contract().at().methodName().call() for read operations
+
+---
+
+### **Operators**
+
+Before facilitating payments, an operator must register with the contract.
+Registration lets the operator:
+
+* identify itself to the protocol
+* choose where fees should be delivered
+
+Operators are free to register or step away at any time.
+Every payment includes the operator responsible for handling it.
+
+---
+
+### **Payment Structure**
+
+A payment request in Divvy includes:
+
+* who receives the main payout
+* which TRC20 token is used
+* how much goes to the recipient
+* which operator is involved
+* how much the operator earns
+* the sender providing the funds
+* a unique ID used to lock the payment to a single successful execution
+
+This data is passed directly into the settlement function.
+
+---
+
+## **Settlement Rules**
+
+Divvy enforces several conditions during settlement:
+
+* recipient and operator amounts must match what was supplied
+* the same payment ID cannot be handled twice
+* all token movements occur in one atomic transaction
+* if anything goes wrong, nothing is transferred
+
+The goal is to keep payments simple, predictable, and tamper-resistant.
+
+---
+
+## **Testing**
+
+Use the Tron Nile testnet for early integration.
+A faucet is available via TronGrid.
+
+---
+
+## **Main Function**
+
+### `splitPayment(...)`
+
+This function:
+
+1. pulls the specified token amount from the payer
+2. transfers the recipient portion
+3. transfers the operator’s fee
+4. records the payment ID as completed
+
+If any step is invalid, the transaction reverts.
+
+---
+
+## **Events**
+
+Successful settlement emits an event containing:
+
+* the payment ID
+* the operator
+* sender and recipient
+* token address
+* amounts paid
+
+This allows external systems to track or index payouts.
+
+---
+
+## **Troubleshooting**
+
+- Ensure operators are registered before calling splitPayment
+- Verify token decimals and balances
+- Validate unique payment IDs
+- Confirm TRX balance for energy/bandwidth
 
